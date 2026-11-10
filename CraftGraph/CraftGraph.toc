@@ -1,0 +1,19 @@
+## Interface: 16001
+## Title: CraftGraph
+## Notes: Every way to make money right now (craft, relist, vendor routes, bag sales), a crafting graph with buy, make and sell buttons, auction prices with their certainty, and a tracker for pinned items. /cg
+## Version: 0.1
+## SavedVariables: CraftGraphDB
+## OptionalDeps: Auctionator
+## IconTexture: Interface\Icons\INV_Misc_Coin_02
+## AddonCompartmentFunc: CraftGraph_OnAddonCompartmentClick
+
+Data\Recipes.lua
+Data\Online.lua
+Core.lua
+Market.lua
+Stats.lua
+Optimizer.lua
+Graph.lua
+UI\Chart.lua
+UI\GraphView.lua
+UI\Main.lua

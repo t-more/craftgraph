@@ -11,6 +11,7 @@ Data\Recipes.lua
 Data\Online.lua
 Data\Latest.lua
 Data\Shared.lua
+Data\Helper.lua
 Core.lua
 Market.lua
 Stats.lua

@@ -3979,6 +3979,52 @@ end
 -- and the thirty days their terms allow the data to be kept.
 ------------------------------------------------------------------------------
 local blizzardPane
+local TERMS_URL = "https://www.blizzard.com/en-us/legal/a2989b50-5f16-43b1-abec-2ae17cc09dd6/blizzard-developer-api-terms-of-use"
+
+-- The steps to hourly prices, in order, each with whether it is done. Only
+-- what is left is shown. A step may carry a text to copy and one button:
+-- "again" reloads the game to look again, "ask" asks the helper to do it.
+function UI.SetupSteps()
+  local M = ns.Market
+  local h = M.Helper()
+  local o = ns.Online
+  local steps = {
+    { key = "helper", done = h ~= nil, title = "Start the helper on your computer",
+      text = "The game cannot reach the internet or start a program, so a small helper outside it does. It needs "
+        .. "Python 3 (free: python.org/downloads). In the addon's sync folder double-click \"Set up online "
+        .. "features\" (Windows), or run this outside the game. A page opens in your browser. Then press the button.",
+      box = "python3 sync/craftgraph_setup.py", button = "Done: look again", again = true },
+    { key = "key", done = h ~= nil and h.key == true, title = "Enter your own Blizzard API key on the helper's page",
+      text = "The page shows what you take on: the key is yours and so are Blizzard's terms. Make a free key at "
+        .. "this address (sign in, Create Client, any name), enter it on the page, then press the button. "
+        .. "The key stays in one private file on your computer and never comes into the game.",
+      box = "https://develop.battle.net/access/clients", button = "Done: look again", again = true },
+    { key = "watch", done = h ~= nil and h.watch == true, title = "Let the buttons here work",
+      text = "On the helper's page press \"Let the game's buttons work, always\", or keep that page open while "
+        .. "you play. From then on the buttons here can ask the helper to fetch, delete and keep things for you.",
+      button = "Done: look again", again = true },
+    { key = "scan", done = ns.db.lastFullScan ~= nil, title = "Do one full scan at the auction house",
+      text = "The helper finds which auction house is yours by comparing Blizzard's lists with your own scan. "
+        .. "Open the auction house and press Full scan above. This step goes away when the scan is done." },
+    { key = "fetch", done = type(o) == "table" and o.realm == ns.realmKey and M.OnlineAge() ~= nil,
+      title = "Fetch the prices",
+      text = "The helper downloads your auction house from Blizzard and writes it where the game reads it. "
+        .. "The game reloads to pass the request on; a few seconds later press \"Show the answer\".",
+      button = "Fetch the prices", ask = "run" },
+  }
+  if not (h and h.windows) then
+    steps[#steps + 1] = { key = "hourly", done = h ~= nil and h.timer == true, title = "Fetch every hour by itself (optional)",
+      text = "Prices then stay fresh while you are away. It runs while you are logged in to this computer, "
+        .. "and the game shows them at its next login or /reload.",
+      button = "Fetch every hour", ask = "install_timer" }
+  end
+  local left = {}
+  for i, step in ipairs(steps) do
+    step.n = i
+    if not step.done then left[#left + 1] = step end
+  end
+  return steps, left
+end
 
 local function BuildBlizzard()
   if blizzardPane then return end
@@ -3992,67 +4038,133 @@ local function BuildBlizzard()
   f.intro:SetPoint("TOPLEFT", 16, -26)
   f.intro:SetPoint("TOPRIGHT", -16, -26)
   f.intro:SetWordWrap(true)
-  f.intro:SetMaxLines(3)
+  f.intro:SetMaxLines(2)
   f.intro:SetSpacing(2)
-  f.intro:SetText("Blizzard publishes every auction house once an hour. A small optional program on your "
-    .. "computer fetches yours, so prices are known while you are away. The data comes from Blizzard; "
-    .. "CraftGraph is not affiliated with or endorsed by Blizzard. Without this nothing here changes.")
+  f.intro:SetText("Blizzard publishes every auction house once an hour. An optional helper on your computer fetches "
+    .. "yours, so prices are known while you are away. The data comes from Blizzard; CraftGraph is not "
+    .. "affiliated with or endorsed by Blizzard. Without this nothing here changes.")
   f.status = Text(f, "GameFontHighlight")
-  f.status:SetPoint("TOPLEFT", 16, -74)
-  f.status:SetPoint("TOPRIGHT", -16, -74)
-  f.status:SetWordWrap(true)
-  f.status:SetMaxLines(2)
+  f.status:SetPoint("TOPLEFT", 16, -62)
+  f.status:SetPoint("TOPRIGHT", -16, -62)
+  f.status:SetWordWrap(false)
+  -- What the helper answered to the last thing asked.
+  f.answer = Text(f, "GameFontHighlightSmall")
+  f.answer:SetPoint("TOPLEFT", 16, -82)
+  f.answer:SetPoint("TOPRIGHT", -200, -82)
+  f.answer:SetWordWrap(true)
+  f.answer:SetMaxLines(3)
+  f.answer:SetSpacing(2)
+  f.answerButton = Button(f, "Show the answer", 170)
+  f.answerButton:SetPoint("TOPRIGHT", -16, -80)
+  f.answerButton:SetScript("OnClick", function()
+    local asked = ns.Market.Asked()
+    if asked and (asked.state == "done" or asked.state == "failed") then
+      ns.Market.ForgetAsked()
+      UI.UpdateBlizzard()
+    else
+      ReloadUI()
+    end
+  end)
+  Tip(f.answerButton, "The helper's answer",
+    "The game only reads files when it loads, so the answer shows after a reload. This reloads the game.")
+  -- What is left to do: the next step in full, the later ones by name.
+  f.doneLine = Text(f, "GameFontHighlightSmall")
+  f.doneLine:SetPoint("TOPLEFT", 16, -130)
+  f.doneLine:SetPoint("TOPRIGHT", -16, -130)
+  f.doneLine:SetWordWrap(false)
+  f.stepTitle = Text(f, "GameFontNormal")
+  f.stepTitle:SetPoint("TOPLEFT", 16, -150)
+  f.stepText = Text(f, "GameFontHighlightSmall")
+  f.stepText:SetPoint("TOPLEFT", 16, -168)
+  f.stepText:SetPoint("TOPRIGHT", -16, -168)
+  f.stepText:SetWordWrap(true)
+  f.stepText:SetMaxLines(3)
+  f.stepText:SetSpacing(2)
+  f.stepBox = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+  f.stepBox:SetSize(470, 20)
+  f.stepBox:SetPoint("TOPLEFT", 22, -212)
+  f.stepBox:SetAutoFocus(false)
+  f.stepBox:SetScript("OnTextChanged", function(self, user) if user then self:SetText(self.keep or "") end end)
+  f.stepBox:SetScript("OnEditFocusGained", function(self) if self.HighlightText then self:HighlightText() end end)
+  f.stepBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  Tip(f.stepBox, "To copy", "Click the box and press Ctrl+C. It is for use outside the game.")
+  f.stepButton = Button(f, "", 190)
+  f.stepButton:SetPoint("TOPLEFT", 506, -211)
+  f.stepButton:SetScript("OnClick", function()
+    local step = f.step
+    if not step then return end
+    if step.ask then ns.Market.Ask(step.ask) else ReloadUI() end
+  end)
+  Tip(f.stepButton, "This reloads the game",
+    "The game reads what the helper wrote only when it loads, and passes a request on only when it saves. "
+    .. "Both happen in a reload, which takes a few seconds.")
+  f.later = Text(f, "GameFontDisableSmall")
+  f.later:SetPoint("TOPLEFT", 16, -240)
+  f.later:SetPoint("TOPRIGHT", -16, -240)
+  f.later:SetWordWrap(false)
+  -- Things to ask the helper for at any time.
+  f.askHead = Text(f, "GameFontNormal")
+  f.askHead:SetPoint("TOPLEFT", 16, -264)
+  f.askHead:SetText("Ask the helper (each reloads the game to pass it on)")
+  f.asks = {}
+  local x = 16
+  for _, a in ipairs({
+    { "run", "Fetch prices now", 130, "Downloads your auction house from Blizzard now." },
+    { "archive", "Keep every scan", 126, "Copies every in-game scan into a database on your computer, in full and for good." },
+    { "check_update", "Newer version?", 120, "Looks on GitHub for a newer CraftGraph." },
+    { "data_pull", "Shared prices", 112, "Fetches the prices other players share on GitHub." },
+  }) do
+    local b = Button(f, a[2], a[3])
+    b:SetPoint("TOPLEFT", x, -282)
+    b.ask = a[1]
+    b:SetScript("OnClick", function() ns.Market.Ask(a[1]) end)
+    Tip(b, a[2], a[4] .. " The game reloads to pass the request on; press \"Show the answer\" a few seconds later.")
+    f.asks[#f.asks + 1] = b
+    x = x + a[3] + 6
+  end
+  f.askNote = Text(f, "GameFontDisableSmall")
+  f.askNote:SetPoint("TOPLEFT", 16, -284)
+  f.askNote:SetPoint("TOPRIGHT", -16, -284)
+  f.askNote:SetWordWrap(false)
   -- The thirty days.
   f.keep = Text(f, "GameFontHighlightSmall")
-  f.keep:SetPoint("TOPLEFT", 16, -110)
-  f.keep:SetPoint("TOPRIGHT", -230, -110)
+  f.keep:SetPoint("TOPLEFT", 16, -318)
+  f.keep:SetPoint("TOPRIGHT", -236, -318)
   f.keep:SetWordWrap(true)
-  f.keep:SetMaxLines(3)
+  f.keep:SetMaxLines(2)
   f.keep:SetSpacing(2)
-  f.forget = Button(f, "Delete what is older than 30 days", 206)
-  f.forget:SetPoint("TOPRIGHT", -16, -108)
+  f.forget = Button(f, "Delete what is older than 30 days", 212)
+  f.forget:SetPoint("TOPRIGHT", -16, -316)
   f.forget:SetScript("OnClick", function()
     ns.Market.ForgetOldOnline()
+    local h = ns.Market.Helper()
+    -- With the helper listening, the files on the computer go too.
+    if h and h.watch then ns.Market.Ask("purge") end
     UI.UpdateBlizzard()
   end)
   Tip(f.forget, "Delete old Blizzard data",
     "Blizzard's terms allow data from their service to be kept thirty days at most. This stops the game "
-    .. "using anything older, at once and for good. The files on your computer are deleted by the "
-    .. "program itself: its setup page has a button, or run the \"purge\" command shown below. Your own scans are yours and stay.")
+    .. "using anything older, at once and for good, and asks the helper to delete it from your computer "
+    .. "too (the game reloads for that). Without the helper listening, delete the files on its page or "
+    .. "with: python3 sync/craftgraph_sync.py purge. Your own scans are yours and stay.")
   f.done = Text(f, "GameFontHighlightSmall")
-  f.done:SetPoint("TOPLEFT", 16, -156)
-  f.done:SetPoint("TOPRIGHT", -16, -156)
+  f.done:SetPoint("TOPLEFT", 16, -350)
+  f.done:SetPoint("TOPRIGHT", -16, -350)
   f.done:SetWordWrap(true)
   f.done:SetMaxLines(2)
-  local head = Text(f, "GameFontNormal")
-  head:SetPoint("TOPLEFT", 16, -186)
-  head:SetText("Setting it up (outside the game; click a box and press Ctrl+C to copy)")
-  local tool = "python3 sync/craftgraph_sync.py "
-  f.boxes = {
-    CopyBox(f, -206, "1. Easiest: the setup page. In the addon's sync folder, double-click \"Set up online features\" "
-      .. "(Windows) or run this. Needs Python 3 (free: python.org/downloads):",
-      "python3 sync/craftgraph_setup.py"),
-    CopyBox(f, -250, "2. It asks you to read Blizzard's Developer API Terms of Use. Making a key means you accept them yourself:",
-      "https://www.blizzard.com/en-us/legal/a2989b50-5f16-43b1-abec-2ae17cc09dd6/blizzard-developer-api-terms-of-use"),
-    CopyBox(f, -294, "3. And for a free API key of your own, made here (sign in, Create Client, any name):",
-      "https://develop.battle.net/access/clients"),
-    CopyBox(f, -338, "4. Without the page: \"setup\" once in your own terminal, then this to fetch (full scan in game first):",
-      tool .. "run"),
-    CopyBox(f, -382, "5. Every 30 days: delete Blizzard's older data from your computer (the page has a button too):",
-      tool .. "purge"),
-  }
+  f.terms = CopyBox(f, -378, "Blizzard's Developer API Terms of Use. Making a key means you accept them yourself:", TERMS_URL)
   f.note = Text(f, "GameFontDisableSmall")
-  f.note:SetPoint("TOPLEFT", 16, -428)
-  f.note:SetPoint("TOPRIGHT", -16, -428)
+  f.note:SetPoint("TOPLEFT", 16, -424)
+  f.note:SetPoint("TOPRIGHT", -16, -424)
   f.note:SetWordWrap(true)
   f.note:SetMaxLines(6)
   f.note:SetSpacing(2)
   f.note:SetText("|cffff8c33Your own responsibility.|r CraftGraph is a prototype among friends, given as it is. The key "
     .. "is personal: you make it, you accept Blizzard's terms, you answer for its use. It is kept in one "
     .. "private file on your computer (sync.json in your own config folder) and nowhere else: not in the "
-    .. "addon folder, not in an export, not in anything shared or uploaded. Never send it to anyone. "
-    .. "Main points of the terms: keep their data 30 days at most; do not pass it on or sell it; Blizzard "
-    .. "may end your access at any time, and breaking the terms can cost you the key and may have "
+    .. "addon folder, not in the game, not in an export, not in anything shared or uploaded. Never send it "
+    .. "to anyone. Main points of the terms: keep their data 30 days at most; do not pass it on or sell it; "
+    .. "Blizzard may end your access at any time, and breaking the terms can cost you the key and may have "
     .. "consequences for your account. Exports and shared prices hold only your own in-game scans.")
 end
 
@@ -4061,22 +4173,91 @@ function UI.UpdateBlizzard()
   local f = blizzardPane
   local M = ns.Market
   local o = ns.Online
+  local h = M.Helper()
   local age = M.OnlineAge()
+  local steps, left = UI.SetupSteps()
   if not o or o == false then
-    f.status:SetText("|cffff8c33Not set up.|r The steps are below.")
+    f.status:SetText("|cffff8c33Not set up.|r " .. (#left > 0 and ("Step " .. left[1].n .. " of " .. #steps .. " is next.") or ""))
   elseif o.realm ~= ns.realmKey then
     f.status:SetText("|cffff8c33Set up for another auction house|r (" .. tostring(o.realm) .. "), so it is not used here.")
   elseif not age then
-    f.status:SetText("Set up, but no data is in use: it was all deleted. Run the program to fetch fresh prices.")
+    f.status:SetText("Set up, but no data is in use: it was all deleted. Fetch fresh prices below.")
   else
     f.status:SetText("|cff66ff66Connected:|r " .. tostring(o.name or "your auction house") .. ", prices from "
       .. ns.Age(time() - (o.updated or 0)) .. " (" .. (o.snapshots or 0) .. " hourly snapshots)"
       .. (M.Source("Online") and "." or "; switched off on the Data sources page."))
   end
+  -- The last thing asked of the helper.
+  local asked = M.Asked()
+  if not asked then
+    f.answer:SetText("")
+    f.answerButton:Hide()
+  elseif asked.state == "waiting" then
+    f.answer:SetText("Asked the helper to " .. asked.text .. " (" .. ns.Age(asked.age) .. "). It answers within "
+      .. "seconds, but the game only reads the answer when it loads.")
+    f.answerButton:SetText("Show the answer")
+    f.answerButton:Show()
+  elseif asked.state == "silent" then
+    f.answer:SetText("|cffff8c33No answer yet|r to \"" .. asked.text .. "\" (asked " .. ns.Age(asked.age)
+      .. "). Is the helper listening? Open its page outside the game (python3 sync/craftgraph_setup.py) "
+      .. "and keep it open, or press \"Let the game's buttons work, always\" there. Then look again.")
+    f.answerButton:SetText("Look again")
+    f.answerButton:Show()
+  else
+    local text = tostring(asked.answer or ""):gsub("|", "||")
+    f.answer:SetText((asked.state == "done" and "|cff66ff66The helper did it|r" or "|cffff8c33That did not work|r")
+      .. " (" .. asked.text .. ", " .. ns.Age(time() - (asked.t or time())) .. "): " .. text:gsub("\n", " "))
+    f.answerButton:SetText("OK")
+    f.answerButton:Show()
+  end
+  -- What is done, the next step, and what comes after.
+  local doneNames = {}
+  local NAMES = { helper = "helper found", key = "your key saved", watch = "buttons work", scan = "full scan made",
+    fetch = "prices fetched", hourly = "hourly fetch on" }
+  for _, step in ipairs(steps) do
+    if step.done then doneNames[#doneNames + 1] = NAMES[step.key] end
+  end
+  f.doneLine:SetText(#doneNames > 0 and ("|cff66ff66Done:|r " .. table.concat(doneNames, ", ")
+    .. (h and h.python and (GREY .. "  (Python " .. h.python .. ")|r") or "")) or "")
+  local step = left[1]
+  f.step = step
+  if step then
+    f.stepTitle:SetText("Step " .. step.n .. " of " .. #steps .. ": " .. step.title)
+    f.stepText:SetText(step.text)
+    f.stepBox.keep = step.box
+    f.stepBox:SetText(step.box or "")
+    f.stepBox:SetShown(step.box ~= nil)
+    f.stepButton:SetShown(step.button ~= nil)
+    if step.button then
+      f.stepButton:SetText(step.button)
+      f.stepButton:ClearAllPoints()
+      f.stepButton:SetPoint("TOPLEFT", step.box and 506 or 16, -211)
+      -- Asking needs someone to listen.
+      f.stepButton:SetEnabled(not step.ask or (h ~= nil and h.watch == true))
+    end
+    local names = {}
+    for i = 2, #left do names[#names + 1] = left[i].n .. ". " .. left[i].title end
+    f.later:SetText(#names > 0 and ("Then: " .. table.concat(names, "  |  ")) or "")
+  else
+    f.stepTitle:SetText("|cff66ff66Everything is set up.|r")
+    f.stepText:SetText("Prices are fetched every hour while you are logged in to your computer, and the game shows "
+      .. "them at its next login or /reload. The buttons below ask the helper for things in between.")
+    f.stepBox:Hide()
+    f.stepButton:Hide()
+    f.later:SetText("")
+  end
+  -- The asking buttons need the helper to be listening.
+  local listening = h ~= nil and h.watch == true
+  f.askHead:SetShown(h ~= nil)
+  for _, b in ipairs(f.asks) do
+    b:SetShown(listening)
+    b:SetEnabled(b.ask ~= "run" or (h ~= nil and h.key == true))
+  end
+  f.askNote:SetText((h and not listening) and "The helper is not listening right now: open its page outside the game, or finish the step above." or "")
   local keep = M.ONLINE_KEEP_DAYS
   if age and age > keep then
     f.keep:SetText("|cffff8c33You hold Blizzard data that is " .. math.floor(age) .. " days old.|r Their terms allow "
-      .. keep .. " days: delete the older part now, here and with step 5 below.")
+      .. keep .. " days: delete the older part now with the button.")
   elseif age then
     f.keep:SetText("Blizzard's terms allow their data to be kept " .. keep .. " days. The oldest in use is "
       .. (age < 1 and "under a day" or (math.floor(age) .. (math.floor(age) == 1 and " day" or " days")))
@@ -4088,7 +4269,8 @@ function UI.UpdateBlizzard()
   f.forget:SetEnabled(age ~= nil)
   local at = ns.db.onlineForgotAt
   f.done:SetText(at and ("|cff66ff66Deleted in the game " .. ns.Age(time() - at) .. ":|r nothing older than " .. keep
-    .. " days is used. Now delete it from your computer too, with step 5.") or "")
+    .. " days is used. " .. (listening and "The helper was asked to delete it from your computer too."
+      or "Now delete it from your computer too: on the helper's page, or with python3 sync/craftgraph_sync.py purge.")) or "")
   f.age = age
 end
 

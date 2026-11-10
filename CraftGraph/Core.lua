@@ -159,6 +159,9 @@ local function InitDB()
     if db.settings[k] == nil then db.settings[k] = v end
   end
   ns.db = db
+  -- A request left for the helper outside the game: count the loads since,
+  -- so that we can tell "not answered yet" from "nobody is listening".
+  if db.asked then db.asked.loads = (db.asked.loads or 0) + 1 end
   ns.settings = db.settings
 end
 

@@ -52,6 +52,10 @@ the human judge the effort. Friends get it as a zip, so it must work from the zi
 - The key is entered outside the game, on the setup page (`sync/craftgraph_setup.py`): standard
   library only, served on 127.0.0.1 with a one-run code, and the key is never sent back to the
   page. It only puts buttons on the tool's commands; anything new goes in the tool first.
+- The game cannot start a program. In-game buttons leave a request (an action's name from a fixed
+  list) in the saved data and reload; the tool's `handle`/`watch` does it and answers through
+  `Data/Helper.lua`, read at the next load. Setup in the game is a list of steps that shows only
+  what is left. Files the tool writes into `Data/` are never replaced by an install.
 
 ## How we work
 - Source of truth: this repository. The game folder is an install target (`./install.sh`).

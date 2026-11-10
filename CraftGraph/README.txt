@@ -213,6 +213,10 @@ Online prices (optional)
   keep every scan, look for a newer version and share prices. The key is
   written to one private file outside the addon folder and is never shown
   again, exported, shared or uploaded.
+  In the game, Data > Blizzard prices walks through the steps and shows only
+  what is left. While the setup page is open (or after "Let the game's
+  buttons work, always" on it) the buttons there ask the helper to fetch,
+  keep and delete for you; each reloads the game to pass the request on.
   The same by hand, in a terminal:
     python3 sync/craftgraph_sync.py setup      (enter the client ID and secret)
     python3 sync/craftgraph_sync.py run        (after a full scan in game and /reload)

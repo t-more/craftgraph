@@ -2817,11 +2817,78 @@ do
   ns.Open(2840) RunTimers()
   ns.UI.ShowData("blizzard")
   local bp = ns.UI.blizzardPane
-  check(bp.status.text:find("Not set up", 1, true) and bp.boxes[1].text:find("craftgraph_setup.py", 1, true)
-    and bp.boxes[2].text:find("blizzard.com", 1, true) and bp.boxes[5].text:find("purge", 1, true),
-    "the page gives the setup steps: the setup page, the terms, the key, the commands: " .. bp.status.text)
+  -- Step by step, showing only what is left. With no helper: start it.
+  local oldHelper, oldFull, oldAsked, oldRequests = ns.Helper, ns.db.lastFullScan, ns.db.asked, ns.db.requests
+  ns.Helper, ns.db.lastFullScan, ns.db.asked, ns.db.requests = false, nil, nil, nil
+  local wow = { reloaded = false }
+  ReloadUI = function() wow.reloaded = true end
+  ns.UI.UpdateBlizzard()
+  local steps, left = ns.UI.SetupSteps()
+  check(#steps == 6 and #left == 6 and left[1].key == "helper", "with nothing set up all six steps are left, the helper first")
+  check(bp.status.text:find("Not set up", 1, true) and bp.stepTitle.text:find("Step 1 of 6", 1, true)
+    and bp.stepBox.text:find("craftgraph_setup.py", 1, true) and bp.stepText.text:find("python.org/downloads", 1, true),
+    "the page shows the first step with what to run and where Python is: " .. bp.stepTitle.text)
+  check(bp.later.text:find("2. Enter your own", 1, true) and bp.terms.text:find("blizzard.com", 1, true),
+    "the later steps are named, and the terms are linked")
+  check(not bp.asks[1]:IsShown() and not bp.askHead:IsShown(), "with no helper there are no buttons to ask it")
   check(bp.note.text:find("Your own responsibility", 1, true) and bp.note.text:find("nowhere else", 1, true),
     "and says whose key and whose responsibility it is")
+  wow.reloaded = false
+  bp.stepButton.scripts.OnClick(bp.stepButton)
+  check(wow.reloaded == true and ns.db.asked == nil, "\"Done: look again\" reloads the game and asks for nothing")
+  -- The helper has run, no key yet.
+  ns.Helper = { written = now, python = "3.14", key = false, watch = true, timer = false, windows = false, results = {} }
+  ns.UI.UpdateBlizzard()
+  check(bp.stepTitle.text:find("Step 2 of 6", 1, true) and bp.stepBox.text:find("develop.battle.net", 1, true)
+    and bp.doneLine.text:find("helper found", 1, true) and bp.doneLine.text:find("buttons work", 1, true),
+    "with the helper there the key is next, and what is done is one line: " .. bp.doneLine.text)
+  check(bp.asks[2]:IsShown() and bp.asks[2].enabled ~= false and bp.asks[1].enabled == false,
+    "the helper can be asked to keep scans, but not to fetch without a key")
+  -- Key saved: the full scan is next, then the fetch.
+  ns.Helper.key = true
+  ns.UI.UpdateBlizzard()
+  check(bp.stepTitle.text:find("full scan", 1, true) and not bp.stepButton:IsShown(), "then one full scan: " .. bp.stepTitle.text)
+  ns.db.lastFullScan = now - 60
+  ns.UI.UpdateBlizzard()
+  check(bp.stepTitle.text:find("Step 5 of 6: Fetch the prices", 1, true) and bp.stepButton.enabled ~= false, "then the fetch: " .. bp.stepTitle.text)
+  -- The button leaves a request and reloads.
+  wow.reloaded = false
+  bp.stepButton.scripts.OnClick(bp.stepButton)
+  local req = ns.db.requests and ns.db.requests[1]
+  check(wow.reloaded == true and req and req.a == "run" and req.id == ns.db.asked.id and #ns.db.requests == 1,
+    "\"Fetch the prices\" leaves a request for the helper and reloads the game")
+  check(M.Ask("format the disk") == false and #ns.db.requests == 1, "only the known actions can be asked for")
+  local text = ""
+  for k, v in pairs(req) do text = text .. tostring(k) .. tostring(v) end
+  check(not text:find("secret", 1, true) and not text:find("key", 1, true), "a request holds an action's name, never a key")
+  ns.db.asked.loads = 1
+  ns.UI.UpdateBlizzard()
+  check(M.Asked().state == "waiting" and bp.answer.text:find("Asked the helper to fetch", 1, true)
+    and bp.answerButton:IsShown() and bp.answerButton.text == "Show the answer", "after the reload the page says it is waiting: " .. bp.answer.text)
+  ns.db.asked.loads = 2
+  ns.UI.UpdateBlizzard()
+  check(M.Asked().state == "silent" and bp.answer.text:find("No answer yet", 1, true) and bp.answerButton.text == "Look again",
+    "a second load with no answer says nobody is listening")
+  ns.Helper.results = { { id = req.id, action = "run", ok = true, t = now, text = "Test House: 5 listings stored.\nThey load at your next login." } }
+  ns.UI.UpdateBlizzard()
+  check(M.Asked().state == "done" and bp.answer.text:find("The helper did it", 1, true) and bp.answer.text:find("5 listings", 1, true),
+    "the helper's answer is shown: " .. bp.answer.text)
+  bp.answerButton.scripts.OnClick(bp.answerButton)
+  check(M.Asked() == nil and not bp.answerButton:IsShown(), "OK puts the answer away")
+  ns.Helper.results = { { id = "x", action = "run", ok = false, t = now, text = "Blizzard refused the API key (401)." } }
+  ns.db.asked = { id = "x", a = "run", t = now, loads = 2 }
+  ns.UI.UpdateBlizzard()
+  check(bp.answer.text:find("That did not work", 1, true) and bp.answer.text:find("401", 1, true), "and so is a failure")
+  ns.db.asked = { id = "old", a = "run", t = now - 3600, loads = 1 }
+  check(M.Asked() == nil, "a request nobody answered in fifteen minutes is dropped")
+  -- Not listening: the buttons that ask are off, with the reason.
+  ns.Helper.watch = false
+  ns.UI.UpdateBlizzard()
+  check(bp.stepTitle.text:find("Let the buttons here work", 1, true) and not bp.asks[1]:IsShown()
+    and bp.askNote.text:find("not listening", 1, true), "when the helper is not listening the page says so: " .. bp.stepTitle.text)
+  ns.Helper.watch, ns.Helper.windows = true, true
+  check(#(ns.UI.SetupSteps()) == 5, "on Windows the hourly step is left out")
+  ns.Helper.windows = false
   -- Forty days of hourly data.
   local h = {}
   for day = 40, 0, -1 do
@@ -2845,8 +2912,12 @@ do
   bp.forget.scripts.OnClick(bp.forget)
   local kept = M.Series(id)
   check(#kept == 31 and kept[1][1] >= now - 30 * 86400 - 1, "the delete button drops what is older than thirty days (" .. #kept .. " left)")
-  check(M.OnlineAge() <= 30.01 and bp.done.text:find("Deleted in the game", 1, true) and bp.done.text:find("step 5", 1, true),
-    "it says it is done, and that the files are the tool's to delete: " .. bp.done.text)
+  check(M.OnlineAge() <= 30.01 and bp.done.text:find("Deleted in the game", 1, true) and bp.done.text:find("helper was asked", 1, true)
+    and ns.db.asked and ns.db.asked.a == "purge", "it says it is done, and the helper is asked to delete the files too: " .. bp.done.text)
+  ns.Helper.timer = true
+  ns.UI.UpdateBlizzard()
+  check(bp.stepTitle.text:find("Everything is set up", 1, true) and not bp.stepButton:IsShown() and bp.asks[1].enabled ~= false,
+    "with all six done only the everyday buttons are left")
   check(M.Info(id).price == 100, "the fresh data stays in use")
   ns.generation = ns.generation + 1
   check(#M.Series(id) == 31, "and what was deleted does not come back")
@@ -2854,6 +2925,7 @@ do
   local text = M.Export()
   check(text:find('"' .. id .. '":', 1, true) == nil, "an item known only from Blizzard's data is not exported")
   ns.Online, ns.db.onlineKeepAfter, ns.db.onlineForgotAt = oldOnline, oldKeep, nil
+  ns.Helper, ns.db.lastFullScan, ns.db.asked, ns.db.requests = oldHelper, oldFull, oldAsked, oldRequests
   ns.generation = ns.generation + 1
   SlashCmdList.CRAFTGRAPH("blizzard")
   ns.UI.ShowData()

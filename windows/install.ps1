@@ -124,6 +124,17 @@ try {
         }
     }
 
+    # So are the other files the tool writes: newest version, shared prices, the helper's answers.
+    $keptOthers = @{}
+    foreach ($name in @("Latest.lua", "Shared.lua", "Helper.lua")) {
+        $file = Join-Path $target ("Data\" + $name)
+        if (Test-Path $file) {
+            $copy = Join-Path $env:TEMP ("CraftGraph-" + [guid]::NewGuid().ToString() + "-" + $name)
+            Copy-Item $file $copy
+            $keptOthers[$name] = $copy
+        }
+    }
+
     New-Item -ItemType Directory -Force -Path $addons | Out-Null
     $updating = Test-Path $target
     if ($updating) { Remove-Item -Recurse -Force $target }
@@ -131,6 +142,10 @@ try {
     if ($keptOnline) {
         Copy-Item -Force $keptOnline $online
         Remove-Item -Force $keptOnline
+    }
+    foreach ($name in $keptOthers.Keys) {
+        Copy-Item -Force $keptOthers[$name] (Join-Path $target ("Data\" + $name))
+        Remove-Item -Force $keptOthers[$name]
     }
 
     if (-not (Test-Path (Join-Path $target "CraftGraph.toc"))) {

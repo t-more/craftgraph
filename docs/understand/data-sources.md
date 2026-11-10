@@ -70,8 +70,8 @@ that you are there.
 Everything else stays on your computer. Without this the addon is unchanged.
 
 ## Hourly prices from Blizzard, and what you take on
-The **Blizzard prices** sub-page (or `/cg blizzard`) has the setup steps with commands to copy,
-shows whether you are connected, and reminds you of the thirty days.
+The **Blizzard prices** sub-page (or `/cg blizzard`) sets it up step by step. It shows only what
+is left to do: the next step in full, the later ones by name, and what is done on one line.
 
 ![The Blizzard prices page](../media/data-blizzard.png)
 
@@ -83,6 +83,21 @@ what you take on, your key, fetching the prices (once or every hour), the thirty
 extras that need no key (keep every scan, look for a newer version, shared prices). Each button
 runs the same command you could type yourself and shows what it printed. Without Python the
 launcher says so and nothing else changes.
+
+### Buttons in the game
+The game cannot start a program. So a button in the game (**Fetch the prices**, **Keep every
+scan**, **Newer version?**, **Shared prices**, **Delete what is older than 30 days**) leaves a
+request in the addon's saved data and reloads the game, which saves it. A helper outside the game
+sees the file change, does what was asked, and writes its answer where the game reads it. The
+game only reads files when it loads, so **Show the answer** reloads once more.
+
+![The helper's answer in the game](../media/data-blizzard-fetch.png)
+
+The helper listens while the setup page is open, or always once you press **Let the game's
+buttons work, always** on that page (Linux; on Windows keep the page open, or run
+`python craftgraph_sync.py watch`). Only a fixed list of actions can be asked for, the request
+holds nothing but the action's name, and the key never comes into the game: the game is told
+only that one is saved. If nobody answers, the page says so instead of waiting.
 
 - **The key is yours.** You make it at Blizzard under your own account, which means you accept
   [Blizzard's Developer API Terms of Use](https://www.blizzard.com/en-us/legal/a2989b50-5f16-43b1-abec-2ae17cc09dd6/blizzard-developer-api-terms-of-use) yourself. It is kept in one private file on your

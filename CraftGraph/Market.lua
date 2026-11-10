@@ -503,6 +503,65 @@ function M.ForgetOldOnline()
   return ns.db.onlineKeepAfter
 end
 
+------------------------------------------------------------------------------
+-- The helper outside the game. The game cannot start a program, so a button
+-- leaves a request in the saved data and reloads the game; the helper (the
+-- optional Python tool, when it watches) does it and writes its answer to
+-- Data/Helper.lua, which is read at the next load. Only names of fixed
+-- actions are sent; the API key never comes into the game.
+------------------------------------------------------------------------------
+M.ASK_TEXT = {
+  run = "fetch Blizzard's prices", purge = "delete Blizzard's data older than 30 days",
+  archive = "keep every scan in the database", check_update = "look for a newer version",
+  data_pull = "fetch the prices others share", data_sync = "share your prices and fetch the others'",
+  install_timer = "fetch every hour by itself", remove_timer = "stop the hourly fetch",
+}
+M.ASK_KEEP = 15 * 60          -- the helper ignores anything asked longer ago
+
+-- What the helper last told us, or nil when it has never run.
+function M.Helper()
+  return type(ns.Helper) == "table" and ns.Helper or nil
+end
+
+-- Leaves a request for the helper and reloads the game so that it is saved.
+function M.Ask(action)
+  if not M.ASK_TEXT[action] then return false end
+  local now = time()
+  local list = {}
+  for _, r in ipairs(ns.db.requests or {}) do
+    if now - (r.t or 0) < M.ASK_KEEP then list[#list + 1] = r end
+  end
+  local ask = { id = now .. "-" .. math.random(100000, 999999), a = action, t = now }
+  list[#list + 1] = ask
+  while #list > 5 do table.remove(list, 1) end
+  ns.db.requests = list
+  ns.db.asked = ask
+  ReloadUI()
+  return true
+end
+
+-- The state of the last request: nil (nothing asked), or
+-- { action, text, t, state = "waiting" | "done" | "failed" | "silent", answer }.
+function M.Asked()
+  local ask = ns.db and ns.db.asked
+  if not ask then return nil end
+  local h = M.Helper()
+  for _, r in ipairs(h and h.results or {}) do
+    if r.id == ask.id then
+      return { action = ask.a, text = M.ASK_TEXT[ask.a] or ask.a, t = r.t or ask.t,
+        state = r.ok and "done" or "failed", answer = r.text or "" }
+    end
+  end
+  local age = time() - (ask.t or 0)
+  if age > M.ASK_KEEP then ns.db.asked = nil return nil end
+  return { action = ask.a, text = M.ASK_TEXT[ask.a] or ask.a, t = ask.t, age = age,
+    state = (ask.loads or 0) >= 2 and "silent" or "waiting" }
+end
+
+function M.ForgetAsked()
+  ns.db.asked = nil
+end
+
 function M.Online(id)
   local o = ns.Online
   local meta = (o and o.items and o.realm == ns.realmKey and M.Source("Online")) and o or nil

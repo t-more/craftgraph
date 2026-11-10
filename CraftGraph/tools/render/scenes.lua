@@ -310,9 +310,20 @@ do
   ns.UI.ShowData("github") settle()
   still("data-github", { zoom = 1.5 })
   tour("GitHub (optional): who shares, and how to connect from outside the game", 4)
+  ns.Helper = false
   ns.UI.ShowData("blizzard") settle()
   still("data-blizzard", { zoom = 1.5 })
-  tour("Blizzard prices (optional): your own key, the setup page, and the thirty days", 4)
+  tour("Blizzard prices (optional): a step-by-step setup that shows only what is left", 4)
+  -- Half way: the helper is there with a key, and has just answered.
+  ns.Helper = { written = wow.now, python = "3.12", key = true, watch = true, timer = false, windows = false,
+    results = { { id = "demo", action = "archive", ok = true, t = wow.now - 20,
+      text = "Imported 1 saved file: 412 new price points.\nDatabase: market.sqlite (1.4 MB)." } } }
+  ns.db.asked = { id = "demo", a = "archive", t = wow.now - 30, loads = 1 }
+  ns.db.lastFullScan = ns.db.lastFullScan or wow.now - 600
+  ns.UI.UpdateBlizzard() settle()
+  still("data-blizzard-fetch", { zoom = 1.5 })
+  tour("Buttons in the game ask a helper outside it; the answer shows after a reload", 4)
+  ns.Helper, ns.db.asked = false, nil
   ns.UI.ShowSales(false) settle()
   still("data-sales", { zoom = 1.5 })
   tour("Sales seen: the auctions judged sold between full scans", 4)

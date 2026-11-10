@@ -24,9 +24,11 @@ Only the Python standard library is used.
 
 import argparse
 import base64
+import contextlib
 import glob
 import gzip
 import hashlib
+import io
 import json
 import math
 import os
@@ -897,14 +899,16 @@ def cmd_install_watch(args):
     UNIT_DIR.mkdir(parents=True, exist_ok=True)
     (UNIT_DIR / "craftgraph-archive.service").write_text(
         "[Unit]\nDescription=Import CraftGraph scans into its database\n\n[Service]\nType=oneshot\n"
-        "ExecStart=%s %s archive\n\n[Install]\nWantedBy=default.target\n"
+        "ExecStart=%s %s handle\n\n[Install]\nWantedBy=default.target\n"
         % (sys.executable, json.dumps(str(Path(__file__).resolve()))))
     (UNIT_DIR / "craftgraph-archive.path").write_text(
         "[Unit]\nDescription=Watch the CraftGraph saved file\n\n[Path]\nPathChanged=%s\n"
         "Unit=craftgraph-archive.service\n\n[Install]\nWantedBy=default.target\n" % live)
     os.system("systemctl --user daemon-reload && systemctl --user enable craftgraph-archive.service "
               "&& systemctl --user enable --now craftgraph-archive.path")
-    print("Installed. Scans are imported when you log in to this computer and whenever the game saves.")
+    print("Installed. Whenever the game saves (logout, /reload, exit) your scans are imported and")
+    print("what you asked for with the buttons in the game is done.")
+    write_helper()
 
 
 def cmd_remove_watch(args):
@@ -916,6 +920,7 @@ def cmd_remove_watch(args):
             file.unlink()
     os.system("systemctl --user daemon-reload")
     print("Removed.")
+    write_helper()
 
 
 # ----------------------------------------------------------------------------
@@ -1319,13 +1324,177 @@ def cmd_remove_timer(args):
     print("Removed.")
 
 
+# ----------------------------------------------------------------------------
+# The helper: what the game's buttons ask for
+#
+# The game cannot start a program. A button in the game writes what it wants
+# into the saved file and reloads; this reads it, does it, and writes the
+# answer to Data/Helper.lua, which the game reads at its next load. Only the
+# fixed list of actions below can be asked for, and the API key is never
+# part of what goes to the game: only whether one is saved.
+# ----------------------------------------------------------------------------
+HELPER_FILE = ADDON_DIR / "Data" / "Helper.lua"
+HELPER_STATE = DATA_DIR / "helper.json"
+REQUEST_MAX_AGE = 15 * 60
+watching = [False]          # true while a watch loop runs in this program
+
+
+def capture(fn, file=None):
+    """Runs one command and returns (worked, what it printed)."""
+    out = io.StringIO()
+    args = argparse.Namespace(fixture=None, file=file, command="")
+    ok = True
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            fn(args)
+    except SystemExit as stop:
+        if isinstance(stop.code, str):
+            out.write(stop.code + "\n")
+            ok = False
+        elif stop.code not in (None, 0):
+            ok = False
+    except Exception as error:                      # show it, do not die
+        out.write("Something went wrong: %s\n" % error)
+        ok = False
+    return ok, out.getvalue().strip()
+
+
+def helper_actions():
+    return {"run": cmd_run, "purge": cmd_purge, "archive": cmd_archive, "check_update": cmd_check_update,
+            "data_pull": cmd_data_pull, "data_sync": cmd_data_sync,
+            "install_timer": cmd_install_timer, "remove_timer": cmd_remove_timer}
+
+
+def helper_memory():
+    try:
+        return json.loads(HELPER_STATE.read_text())
+    except (OSError, ValueError):
+        return {"results": []}
+
+
+def lua_text(text):
+    return json.dumps(str(text), ensure_ascii=False)
+
+
+def write_helper(memory=None):
+    """Tells the game what is set up, and the last answers. Never the key."""
+    if not (ADDON_DIR / "Data").is_dir():
+        return
+    memory = memory or helper_memory()
+    cfg = load_config()
+    oldest = None
+    if DB_FILE.exists():
+        db = open_db()
+        oldest = oldest_blizzard_data(db)
+        db.close()
+    lines = [
+        "-- Written by sync/craftgraph_sync.py: what is set up outside the game, and its last answers.",
+        "local _, ns = ...",
+        "ns.Helper = {",
+        "  written = %d," % time.time(),
+        "  python = %s," % lua_text("%d.%d" % sys.version_info[:2]),
+        "  key = %s," % ("true" if cfg.get("client_id") and cfg.get("client_secret") else "false"),
+        "  house = %s," % lua_text(cfg.get("house_name") or ""),
+        "  timer = %s," % ("true" if (UNIT_DIR / "craftgraph-sync.timer").exists() else "false"),
+        "  watch = %s," % ("true" if (UNIT_DIR / "craftgraph-archive.path").exists() or watching[0] else "false"),
+        "  windows = %s," % ("true" if os.name == "nt" else "false"),
+        "  oldest = %s," % (int(oldest) if oldest else "false"),
+        "  results = {",
+    ]
+    for r in memory.get("results", [])[-6:]:
+        lines.append("    { id = %s, action = %s, ok = %s, t = %d, text = %s }," % (
+            lua_text(r["id"]), lua_text(r["action"]), "true" if r["ok"] else "false", r["t"],
+            lua_text(r["text"][-1500:])))
+    lines += ["  },", "}", ""]
+    HELPER_FILE.write_text("\n".join(lines), encoding="utf-8")
+
+
+def handle_requests(verbose=True):
+    """Does what the game asked for since last time. Returns how many."""
+    path = saved_variables_file()
+    memory = helper_memory()
+    done = 0
+    if path:
+        saved = read_saved(path)
+        asked = lua_array(saved.get("requests") or {})
+        known = {r["id"] for r in memory.get("results", [])}
+        actions = helper_actions()
+        for request in asked:
+            if not isinstance(request, dict):
+                continue
+            rid, action, when = str(request.get("id", "")), str(request.get("a", "")), request.get("t") or 0
+            if not rid or rid in known or time.time() - when > REQUEST_MAX_AGE:
+                continue
+            if action in actions:
+                ok, text = capture(actions[action])
+            else:
+                ok, text = False, "The helper does not know \"%s\". Update CraftGraph." % action[:40]
+            memory.setdefault("results", []).append(
+                {"id": rid, "action": action, "ok": ok, "t": int(time.time()), "text": text})
+            known.add(rid)
+            done += 1
+            if verbose:
+                print("%s: %s\n%s" % (action, "done" if ok else "did not work", text))
+    memory["results"] = memory.get("results", [])[-12:]
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    HELPER_STATE.write_text(json.dumps(memory))
+    write_helper(memory)
+    return done
+
+
+def cmd_handle(args):
+    """Run when the game has saved: imports the scans, then does what the
+    buttons in the game asked for."""
+    if saved_variables_file():
+        db = open_db()
+        import_all(db, verbose=False)
+        db.close()
+    if not handle_requests():
+        print("Nothing was asked for. The game has been told what is set up.")
+
+
+def watch_once(seen):
+    """One look at the saved file; handles it when it changed. Returns the
+    file's time for the next look."""
+    path = saved_variables_file()
+    stamp = path.stat().st_mtime if path else None
+    if stamp != seen[0]:
+        first = seen[0] is False
+        seen[0] = stamp
+        if not first:
+            time.sleep(1.0)            # let the game finish writing
+            capture(cmd_handle)
+            return True
+    return False
+
+
+def cmd_watch(args):
+    """Stays running and does what the game's buttons ask, as soon as the
+    game saves. For Windows, or instead of install-watch. Ctrl+C stops it."""
+    watching[0] = True
+    handle_requests(verbose=False)
+    print("Watching the game's saved file. Buttons in the game now work; they act when the game reloads.")
+    print("Press Ctrl+C to stop.")
+    seen = [False]
+    try:
+        while True:
+            if watch_once(seen):
+                print(time.strftime("%H:%M:%S") + " the game saved; handled.")
+            time.sleep(2)
+    except KeyboardInterrupt:
+        pass
+    watching[0] = False
+    write_helper()
+    print("\nStopped.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Bring Blizzard's hourly auction data into CraftGraph.")
     parser.add_argument("command", nargs="?", default="run",
                         choices=["setup", "run", "archive", "houses", "status", "install-timer", "remove-timer",
                                  "install-watch", "remove-watch", "check-update",
                                  "share-export", "share-import",
-                                 "data-publish", "data-pull", "data-sync", "purge", "legal"])
+                                 "data-publish", "data-pull", "data-sync", "purge", "legal", "handle", "watch"])
     parser.add_argument("file", nargs="?", help="for share-export and share-import: the .cg.json file")
     parser.add_argument("--fixture", help=argparse.SUPPRESS)      # read saved API answers (for tests)
     args = parser.parse_args()
@@ -1334,7 +1503,8 @@ def main():
      "install-watch": cmd_install_watch, "remove-watch": cmd_remove_watch,
      "check-update": cmd_check_update, "share-export": cmd_share_export,
      "share-import": cmd_share_import, "data-publish": cmd_data_publish,
-     "data-pull": cmd_data_pull, "data-sync": cmd_data_sync, "purge": cmd_purge, "legal": cmd_legal}[args.command](args)
+     "data-pull": cmd_data_pull, "data-sync": cmd_data_sync, "purge": cmd_purge, "legal": cmd_legal,
+     "handle": cmd_handle, "watch": cmd_watch}[args.command](args)
 
 
 if __name__ == "__main__":

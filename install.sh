@@ -20,14 +20,19 @@ fi
 [ -d "$addons" ] || { echo "No AddOns folder at: $addons" >&2; exit 1; }
 dry=""
 [ "${1:-}" = "--check" ] && dry="--dry-run"
-# tools/ is for development only. Data/Online.lua in the game is written by
-# the sync tool and must not be replaced by the empty one kept here; it is
-# only put there when the game has none.
+# tools/ is for development only. Four files in Data/ are written by the
+# optional tool outside the game (prices, newest version, shared prices,
+# the helper's answers); the empty ones kept here must not replace them,
+# and are only put there when the game has none.
 rsync -a --delete --itemize-changes $dry \
-  --exclude 'tools/' --exclude '__pycache__/' --exclude 'Data/Online.lua' \
+  --exclude 'tools/' --exclude '__pycache__/' \
+  --exclude 'Data/Online.lua' --exclude 'Data/Latest.lua' --exclude 'Data/Shared.lua' --exclude 'Data/Helper.lua' \
   "$here/CraftGraph/" "$addons/CraftGraph/"
-if [ -z "$dry" ] && [ ! -f "$addons/CraftGraph/Data/Online.lua" ]; then
-  cp "$here/CraftGraph/sync/Online.stub.lua" "$addons/CraftGraph/Data/Online.lua"
+if [ -z "$dry" ]; then
+  [ -f "$addons/CraftGraph/Data/Online.lua" ] || cp "$here/CraftGraph/sync/Online.stub.lua" "$addons/CraftGraph/Data/Online.lua"
+  for name in Latest Shared Helper; do
+    [ -f "$addons/CraftGraph/Data/$name.lua" ] || cp "$here/CraftGraph/Data/$name.lua" "$addons/CraftGraph/Data/$name.lua"
+  done
 fi
 [ -n "$dry" ] && echo "(nothing was changed)" || echo "Installed into $addons/CraftGraph"
 # A short command for the optional setup page and tool, when Python 3 is

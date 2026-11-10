@@ -16,10 +16,7 @@ request must carry a random code made for this one run, so no other page or
 program can use it. The API key is written to the private config file and is
 never sent back to the page.
 """
-import argparse
-import contextlib
 import http.server
-import io
 import json
 import os
 import secrets
@@ -40,23 +37,14 @@ last_used = [time.time()]
 
 
 def run_command(fn, file=None):
-    """Runs one of the tool's commands and returns (ok, what it printed)."""
-    out = io.StringIO()
-    args = argparse.Namespace(fixture=None, file=file, command="")
-    ok = True
+    """Runs one of the tool's commands and returns (ok, what it printed).
+    The game is then told what is set up now."""
+    ok, text = tool.capture(fn, file)
     try:
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-            fn(args)
-    except SystemExit as stop:
-        if isinstance(stop.code, str):
-            out.write(stop.code + "\n")
-            ok = False
-        elif stop.code not in (None, 0):
-            ok = False
-    except Exception as error:                      # show it, do not die
-        out.write("Something went wrong: %s\n" % error)
-        ok = False
-    return ok, out.getvalue().strip()
+        tool.write_helper()
+    except Exception:
+        pass
+    return ok, text
 
 
 def state():
@@ -77,6 +65,7 @@ def state():
         "timer": os.name != "nt" and shutil.which("systemctl") is not None,
         "github": shutil.which("gh") is not None or bool(os.environ.get("GITHUB_TOKEN")),
         "saved_data": tool.saved_variables_file() is not None,
+        "watch_installed": (tool.UNIT_DIR / "craftgraph-archive.path").exists(),
     }
     if tool.DB_FILE.exists():
         db = tool.open_db()
@@ -135,6 +124,8 @@ ACTIONS = {
     "data_sync": lambda body: run_command(tool.cmd_data_sync),
     "install_timer": lambda body: run_command(tool.cmd_install_timer),
     "remove_timer": lambda body: run_command(tool.cmd_remove_timer),
+    "install_watch": lambda body: run_command(tool.cmd_install_watch),
+    "remove_watch": lambda body: run_command(tool.cmd_remove_watch),
 }
 
 PAGE = r"""<!doctype html>
@@ -206,6 +197,17 @@ PAGE = r"""<!doctype html>
   <pre id="o-key"></pre>
 </section>
 
+<section id="s-game">
+  <h2>In-game buttons</h2>
+  <p>The game cannot start a program itself. With this on, a button in the game (Data, Blizzard prices) leaves a
+     request when the game reloads, and this helper does it: fetch prices, delete old data, keep scans, and so on.
+     Only those fixed actions can be asked for, and your key never goes to the game.</p>
+  <p id="gamestate" class="dim"></p>
+  <span id="watchbtns"><button data-act="install_watch">Let the game's buttons work, always</button>
+  <button class="plain" data-act="remove_watch">Stop that</button></span>
+  <pre id="o-game"></pre>
+</section>
+
 <section id="s-run" class="locked">
   <h2>3. Fetch the prices</h2>
   <p>Do a full scan in the game first and log out or type <code>/reload</code>, so your auction house can be found.
@@ -244,7 +246,7 @@ PAGE = r"""<!doctype html>
 <script>
 const TOKEN = "__TOKEN__";
 const where = { save_key:"o-key", forget_key:"o-key", run:"o-run", install_timer:"o-run", remove_timer:"o-run",
-  purge:"o-purge", archive:"o-extra", check_update:"o-extra", data_pull:"o-extra", data_sync:"o-extra", status:"o-extra" };
+  install_watch:"o-game", remove_watch:"o-game", purge:"o-purge", archive:"o-extra", check_update:"o-extra", data_pull:"o-extra", data_sync:"o-extra", status:"o-extra" };
 async function call(action, body) {
   const r = await fetch("/api/" + action, { method:"POST", headers:{ "Content-Type":"application/json",
     "X-CraftGraph-Token":TOKEN }, body: JSON.stringify(body || {}) });
@@ -264,6 +266,10 @@ async function refresh() {
   $("region").value = s.region; $("ruleset").value = String(s.ruleset);
   $("timer").hidden = !s.timer; $("notimer").hidden = s.timer;
   $("ghnote").hidden = false;
+  $("watchbtns").hidden = !s.timer;
+  $("gamestate").innerHTML = s.watch_installed ? '<span class="ok">On: the game\'s buttons work whenever you play.</span>'
+    : '<span class="ok">While this page is open, the game\'s buttons work.</span>' + (s.timer ? " Press the button to keep it so after you close it."
+      : " To keep it so on Windows, leave this page open while you play, or run <code>python craftgraph_sync.py watch</code>.");
   let t = "Blizzard's terms allow their data to be kept " + s.keep_days + " days. ";
   if (s.oldest_days === null) t += "None is held yet.";
   else if (s.oldest_days > s.keep_days) t = '<span class="warn">You hold Blizzard data that is ' + Math.floor(s.oldest_days)
@@ -348,11 +354,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._send(200, json.dumps({"ok": ok, "text": text}))
 
 
-def serve(open_browser=True):
+def watch_game():
+    """While the page is open, does what the game's buttons ask for."""
+    seen = [False]
+    try:
+        tool.handle_requests(verbose=False)
+    except Exception:
+        pass
+    while tool.watching[0]:
+        try:
+            if busy.acquire(blocking=False):
+                try:
+                    tool.watch_once(seen)
+                finally:
+                    busy.release()
+        except Exception:
+            pass
+        time.sleep(2)
+
+
+def serve(open_browser=True, watch=False):
     """Starts the page. Returns (server, address)."""
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     address = "http://127.0.0.1:%d/?k=%s" % (server.server_address[1], TOKEN)
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    if watch:
+        tool.watching[0] = True
+        threading.Thread(target=watch_game, daemon=True).start()
     if open_browser:
         try:
             webbrowser.open(address)
@@ -362,7 +390,7 @@ def serve(open_browser=True):
 
 
 def main():
-    server, address = serve()
+    server, address = serve(watch=True)
     print("CraftGraph setup is open in your browser. If it did not open, go to:")
     print("  " + address)
     print("Press Ctrl+C here, or just close this window, when you are done.")
@@ -372,6 +400,11 @@ def main():
         print("Stopped after being idle.")
     except KeyboardInterrupt:
         print("\nStopped.")
+    tool.watching[0] = False
+    try:
+        tool.write_helper()
+    except Exception:
+        pass
     server.shutdown()
 
 

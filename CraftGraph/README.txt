@@ -81,6 +81,12 @@ What to make
   to go: nothing = only what you own, 100% = the best amount the market
   allows.
 
+Recipes not learned
+  When you have the profession for something but not its recipe, a small
+  mark sits on the top right corner of its icon: the item that teaches the
+  recipe, or a book when a trainer does. Hover it for where to get it and
+  its auction price; click it to look the recipe up.
+
 How fast things sell
   Each full scan lists every auction with its seller and a rough time left.
   CraftGraph compares each full scan with the one before: an auction that

@@ -88,6 +88,25 @@ do
     end
   end
   calm()
+  -- Something the character could make if the recipe were learned: the
+  -- item that teaches it sits on the corner of its icon.
+  local unlearned
+  for _, id in ipairs(World.ids) do
+    local spell, teacher = ns.Player.Unlearned(id)
+    if spell and teacher and ns.Market.Info(id) then unlearned = id break end
+  end
+  if unlearned then
+    ns.UI.Focus(unlearned) settle()
+    local v = wow.viewOf(side, 0)
+    still("unlearned", { view = { v[1], v[2], v[3], 150 }, zoom = 2 })
+    wow.point(side.teach, 0.5, 0.5) wow.hover(side.teach)
+    still("unlearned-tip", { view = { v[1] - 60, v[2], v[3] + 60, 190 }, zoom = 2 })
+    calm()
+    tour("A recipe you have not learned: the item that teaches it is shown on the icon", 4)
+  else
+    print("no unlearned recipe with a teaching item in the simulated market")
+  end
+  ns.UI.Focus(hero) settle()
 end
 
 -- The price box: history with forecast, then the week and the day folded.

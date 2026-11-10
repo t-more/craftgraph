@@ -33,7 +33,8 @@ restart is only needed when a file is added or `CraftGraph.toc` changes.
         backtest.lua       price model against simulated markets
         backtest_real.lua  price model against the scans really saved
         stats_v1.lua       the first price model, kept for comparison
-        gen_data.py        regenerates Data/Recipes.lua from wago.tools DB2 exports
+        gen_data.py        regenerates Data/Recipes.lua (recipes, items, which item teaches a
+                           recipe) from wago.tools DB2 exports
 
 ## Where things are on this machine
 

@@ -149,6 +149,10 @@ local function ShowTooltip(button)
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(rank.group == "ready" and "You can make this now" or rank.group == "buy" and "Needs materials bought first"
       or "You do not know this recipe", 1, 0.82, 0)
+    local unlearned, teacher = ns.Player.Unlearned(id)
+    if unlearned then
+      GameTooltip:AddLine(ns.Player.TeacherText(teacher), 0.45, 0.75, 1, true)
+    end
     GameTooltip:AddDoubleLine("One craft earns", Sure(rank.perCraft, rank.sdCraft), 1, 1, 1, 1, 1, 1)
     GameTooltip:AddDoubleLine("From what you own", rank.own > 0 and ("makes " .. ns.Round(rank.own)) or "none", 1, 1, 1, 1, 1, 1)
     GameTooltip:AddDoubleLine("Most worth making", ns.Round(rank.best), 1, 1, 1, 1, 1, 1)
@@ -189,6 +193,10 @@ local function CreateNode(canvas)
   b.iconBorder:SetTexture("Interface\\Common\\WhiteIconFrame")
   b.iconBorder:SetAllPoints(b.icon)
 
+  -- For something the player could make if the recipe were learned: the
+  -- recipe that teaches it, small, on the corner of the icon. Click it to
+  -- look that recipe up.
+  b.teach = ns.UI.CreateTeachMark(b, b.icon, 18)
   b.name = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   b.name:SetPoint("TOPLEFT", b, "TOPLEFT", 56, -8)
   b.name:SetPoint("TOPRIGHT", b, "TOPRIGHT", -7, -8)
@@ -213,24 +221,64 @@ local function CreateNode(canvas)
   b.bigLine:Hide()
   -- A golden halo: the stronger, the better this is to make among the
   -- things on screen. The best one's halo breathes.
-  -- Four strips around the card, so that the halo never covers its text.
-  b.gild = { strips = {} }
-  for i, edge in ipairs({
-    { "BOTTOMLEFT", "TOPLEFT", -5, 0, "BOTTOMRIGHT", "TOPRIGHT", 5, 0, 5, true },      -- above
-    { "TOPLEFT", "BOTTOMLEFT", -5, 0, "TOPRIGHT", "BOTTOMRIGHT", 5, 0, 5, true },      -- below
-    { "TOPRIGHT", "TOPLEFT", 0, 0, "BOTTOMRIGHT", "BOTTOMLEFT", 0, 0, 5, false },      -- left
-    { "TOPLEFT", "TOPRIGHT", 0, 0, "BOTTOMLEFT", "BOTTOMRIGHT", 0, 0, 5, false },      -- right
-  }) do
-    local strip = b:CreateTexture(nil, "BACKGROUND")
-    strip:SetPoint(edge[1], b, edge[2], edge[3], edge[4])
-    strip:SetPoint(edge[5], b, edge[6], edge[7], edge[8])
-    if edge[10] then strip:SetHeight(edge[9]) else strip:SetWidth(edge[9]) end
-    strip:SetColorTexture(1, 0.82, 0, 0)
-    b.gild.strips[i] = strip
+  -- The halo, built to look like light, not paint: a crisp bright rim
+  -- right at the card's edge, and outside it a glow that fades to nothing.
+  -- All of it sits around the card, so it never covers the text. On the
+  -- best card the glow breathes and a glint sweeps across now and then.
+  b.gild = { rim = {}, glow = {}, alpha = 0 }
+  local GLOW, RIM = 14, 2
+  local function Strip(list, layer, sub)
+    local t = b:CreateTexture(nil, layer, nil, sub)
+    if t.SetBlendMode then t:SetBlendMode("ADD") end
+    list[#list + 1] = t
+    return t
   end
-  function b.gild:SetColorTexture(r, g, bl, a)
+  -- rim: top, bottom, left, right
+  local t = Strip(b.gild.rim, "BORDER", 1)
+  t:SetPoint("BOTTOMLEFT", b, "TOPLEFT", -RIM, 0) t:SetPoint("BOTTOMRIGHT", b, "TOPRIGHT", RIM, 0) t:SetHeight(RIM)
+  t = Strip(b.gild.rim, "BORDER", 1)
+  t:SetPoint("TOPLEFT", b, "BOTTOMLEFT", -RIM, 0) t:SetPoint("TOPRIGHT", b, "BOTTOMRIGHT", RIM, 0) t:SetHeight(RIM)
+  t = Strip(b.gild.rim, "BORDER", 1)
+  t:SetPoint("TOPRIGHT", b, "TOPLEFT", 0, 0) t:SetPoint("BOTTOMRIGHT", b, "BOTTOMLEFT", 0, 0) t:SetWidth(RIM)
+  t = Strip(b.gild.rim, "BORDER", 1)
+  t:SetPoint("TOPLEFT", b, "TOPRIGHT", 0, 0) t:SetPoint("BOTTOMLEFT", b, "BOTTOMRIGHT", 0, 0) t:SetWidth(RIM)
+  -- glow: the same four sides, wider, each fading outward
+  local sides = {
+    { "BOTTOMLEFT", "TOPLEFT", -RIM, RIM, "BOTTOMRIGHT", "TOPRIGHT", RIM, RIM, "VERTICAL", true, true },
+    { "TOPLEFT", "BOTTOMLEFT", -RIM, -RIM, "TOPRIGHT", "BOTTOMRIGHT", RIM, -RIM, "VERTICAL", false, true },
+    { "TOPRIGHT", "TOPLEFT", -RIM, RIM, "BOTTOMRIGHT", "BOTTOMLEFT", -RIM, -RIM, "HORIZONTAL", false, false },
+    { "TOPLEFT", "TOPRIGHT", RIM, RIM, "BOTTOMLEFT", "BOTTOMRIGHT", RIM, -RIM, "HORIZONTAL", true, false },
+  }
+  for i, side in ipairs(sides) do
+    local g = Strip(b.gild.glow, "BACKGROUND", 1)
+    g:SetPoint(side[1], b, side[2], side[3], side[4])
+    g:SetPoint(side[5], b, side[6], side[7], side[8])
+    if side[11] then g:SetHeight(GLOW) else g:SetWidth(GLOW) end
+    g:SetColorTexture(1, 1, 1, 1)
+    g.orientation, g.brightFirst = side[9], side[10]
+  end
+  -- Sets the halo's strength, 0 to 1.
+  function b.gild:Set(a)
     self.alpha = a
-    for _, strip in ipairs(self.strips) do strip:SetColorTexture(r, g, bl, a) end
+    for _, strip in ipairs(self.rim) do strip:SetColorTexture(1, 0.90, 0.45, min(1, a * 1.25)) end
+    local bright, dark = CreateColor(1, 0.80, 0.15, a * 0.75), CreateColor(1, 0.70, 0, 0)
+    for _, g in ipairs(self.glow) do
+      if g.brightFirst then g:SetGradient(g.orientation, bright, dark) else g:SetGradient(g.orientation, dark, bright) end
+      g:SetShown(a > 0)
+    end
+  end
+  -- The glint: a soft bright band that crosses the best card.
+  b.shineHost = CreateFrame("Frame", nil, b)
+  b.shineHost:SetAllPoints()
+  b.shineHost:SetClipsChildren(true)
+  b.shineHost:Hide()
+  b.shine = {}
+  for i = 1, 2 do
+    local band = b.shineHost:CreateTexture(nil, "OVERLAY")
+    band:SetSize(34, G.NODE_H + 20)
+    band:SetColorTexture(1, 1, 1, 1)
+    if band.SetBlendMode then band:SetBlendMode("ADD") end
+    b.shine[i] = band
   end
   -- Whether it can be made now, needs buying first, or is not known.
   b.tag = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -349,6 +397,7 @@ local function FillNode(b, node, isCenter)
     b.line1:SetText("")
     b.line2:SetText("")
     b.line3:SetText("")
+    ns.UI.SetTeachMark(b.teach, nil)
     b.moreText:SetText(node.expanded and "Show fewer" or ("+" .. node.more .. " more"))
     b.moreText:Show()
     for _, step in ipairs(b.steps) do step:Hide() end
@@ -367,6 +416,7 @@ local function FillNode(b, node, isCenter)
   b.iconBorder:SetVertexColor(r, g, bl)
   b.name:SetText(ns.ItemName(id))
   b.name:SetTextColor(r, g, bl)
+  ns.UI.SetTeachMark(b.teach, id)
   b.line1:SetText(PriceLine(id))
   b.line2:SetText(VendorLine(id))
   b.line3:SetText(MakeLine(node))
@@ -419,7 +469,8 @@ local function Gild(b, rank, top, compact)
   local gold = (rank and top > 0) and min(1, rank.score / top) or 0
   b.gold = gold
   b.rank = rank
-  b.gild:SetColorTexture(1, 0.82, 0, gold > 0.12 and (0.10 + 0.55 * gold * gold) or 0)
+  b.gild:Set(gold > 0.12 and (0.12 + 0.50 * gold * gold) or 0)
+  b.shineHost:Hide()
   b.greyed = (rank and rank.group == "unknown") or false
   b:SetAlpha(b.greyed and 0.55 or 1)
   local tag
@@ -883,8 +934,27 @@ function V.Animate(view)
   -- The best thing to make: its halo breathes.
   local best = view.topCard
   if best and best.gild and (best.gold or 0) > 0 then
-    local breath = 0.5 + 0.5 * math.sin(GetTime() * 2.2)
-    best.gild:SetColorTexture(1, 0.82, 0, 0.45 + 0.45 * breath)
+    local now = GetTime()
+    local breath = 0.5 + 0.5 * math.sin(now * 2.2)
+    best.gild:Set(0.62 + 0.38 * breath)
+    -- Every few seconds a glint crosses the card, left to right.
+    local cycle = (now % 3.4) / 3.4
+    if cycle < 0.38 then
+      local x = -50 + (cycle / 0.38) * (G.NODE_W + 100)
+      local peak = math.sin(cycle / 0.38 * math.pi) * 0.34
+      local clear, lit = CreateColor(1, 1, 1, 0), CreateColor(1, 0.96, 0.8, peak)
+      best.shine[1]:ClearAllPoints()
+      best.shine[1]:SetPoint("RIGHT", best, "LEFT", x, 0)
+      best.shine[1]:SetGradient("HORIZONTAL", clear, lit)
+      best.shine[2]:ClearAllPoints()
+      best.shine[2]:SetPoint("LEFT", best, "LEFT", x, 0)
+      best.shine[2]:SetGradient("HORIZONTAL", lit, clear)
+      best.shineHost:Show()
+      best.glint = x
+    else
+      best.shineHost:Hide()
+      best.glint = nil
+    end
   end
   local flows = view.flows or {}
   view.pulses = view.pulses or {}

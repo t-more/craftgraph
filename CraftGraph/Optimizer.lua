@@ -2156,3 +2156,51 @@ function O.Rank(id)
 end
 
 O.RANK_GROUPS = { ready = 1, buy = 2, unknown = 3 }
+
+
+------------------------------------------------------------------------------
+-- Recipes the player has not learned
+------------------------------------------------------------------------------
+-- Where the player stands with a recipe:
+--   "known"      learned
+--   "unlearned"  has the profession, its recipes have been read, this one
+--                is not among them: it could be made once learned
+--   "unread"     has the profession, but its window was never opened, so
+--                which recipes are learned is not known yet
+--   "noskill"    does not have the profession
+function P.RecipeState(spell)
+  local r = ns.Data.recipes[spell]
+  if not r then return "noskill" end
+  if P.Knows(spell) then return "known" end
+  if not P.Skills()[r[1]] then return "noskill" end
+  local _, info = P.Worth()
+  if info and info.unverified and info.unverified[r[1]] then return "unread" end
+  return "unlearned"
+end
+
+-- For an item the player could make if only the recipe were learned: the
+-- recipe's spell and the item that teaches it (nil when a trainer does).
+-- Returns nil when the item is not in that position.
+function P.Unlearned(id)
+  if not O.IsCraftable(id) then return nil end
+  local spell = O.BestRecipe(id)
+  if not spell or P.RecipeState(spell) ~= "unlearned" then return nil end
+  return spell, ns.Data.teaches and ns.Data.teaches[spell] or nil
+end
+
+-- What is known about getting the item that teaches a recipe, in words.
+function P.TeacherText(teacher)
+  if not teacher then return "Taught by a profession trainer." end
+  local name = ns.ItemName(teacher)
+  local vendor = M.VendorBuy(teacher)
+  local info = M.Info(teacher)
+  if info and info.price then
+    return name .. " teaches it: cheapest " .. ns.Money(info.price) .. " at auction"
+      .. (vendor and (", " .. ns.Money(vendor) .. " from a vendor") or "") .. "."
+  elseif vendor then
+    return name .. " teaches it: " .. ns.Money(vendor) .. " from a vendor."
+  elseif info then
+    return name .. " teaches it: none at auction when last scanned."
+  end
+  return name .. " teaches it: no price seen yet."
+end

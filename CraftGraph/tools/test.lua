@@ -2618,7 +2618,16 @@ do
   local before = top.gild.alpha
   clock = clock + 0.7
   gv.scripts.OnUpdate(gv, 0.7)
-  check(top.gild.alpha ~= before and top.gild.alpha >= 0.45 and top.gild.alpha <= 0.9, "its halo breathes: " .. tostring(top.gild.alpha))
+  check(top.gild.alpha ~= before and top.gild.alpha >= 0.6 and top.gild.alpha <= 1, "its halo breathes: " .. tostring(top.gild.alpha))
+  clock = 3.4 * 100 + 0.5
+  V.Animate(gv)
+  local first = top.glint
+  clock = clock + 0.3
+  V.Animate(gv)
+  check(first and top.glint and top.glint > first, "a glint crosses the best card, left to right")
+  clock = 3.4 * 100 + 2.5
+  V.Animate(gv)
+  check(top.glint == nil, "and rests between passes")
   -- The slider and the rank button.
   check(gv.sliderValue.text:find("100%", 1, true) ~= nil and gv.rankButton.text == "Rank: in all", "the controls show the setting: " .. gv.sliderValue.text)
   gv.SetRatio(0.52)
@@ -2650,6 +2659,69 @@ do
   local errors = 0
   for _, line in ipairs(ns.db.log) do if line:find("ERROR") then errors = errors + 1 print(line) end end
   check(errors == 0, "no errors in the ranking")
+end
+
+------------------------------------------------------------------------------
+-- A recipe not learned: marked on the icon with the item that teaches it.
+do
+  local O, P = ns.Opt, ns.Player
+  local taught = 0
+  for _ in pairs(ns.Data.teaches) do taught = taught + 1 end
+  check(taught > 1000, "the data knows which item teaches a recipe (" .. taught .. " recipes)")
+  -- A profession the player has and has read; one of its recipes, with a teaching item, not learned.
+  local skills = P.Skills()
+  local _, info = P.Worth()
+  local spell, product, teacher
+  for s2, r in pairs(ns.Data.recipes) do
+    if skills[r[1]] and not info.unverified[r[1]] and ns.Data.teaches[s2] and O.BestRecipe(r[3]) == s2
+      and ns.Data.items[ns.Data.teaches[s2]] then
+      spell, product, teacher = s2, r[3], ns.Data.teaches[s2]
+      break
+    end
+  end
+  check(spell ~= nil, "there is a recipe of a read profession that an item teaches")
+  local oldKnows = P.Knows
+  P.Knows = function(sp) if sp == spell then return false end return oldKnows(sp) end
+  P.version = P.version + 1
+  check(P.RecipeState(spell) == "unlearned", "a recipe of your profession that you lack is \"unlearned\": " .. P.RecipeState(spell))
+  local sp, t = P.Unlearned(product)
+  check(sp == spell and t == teacher, "its product names the recipe and the item that teaches it")
+  check(P.Unlearned(2770) == nil, "a raw material has nothing to learn")
+  check(P.TeacherText(teacher):find(ns.ItemName(teacher), 1, true) ~= nil and P.TeacherText(nil):find("trainer", 1, true) ~= nil,
+    "where to get it is said in words: " .. P.TeacherText(teacher))
+  ns.Market.Record(teacher, { { 12345, 1 } }, { full = true, t = now })
+  check(P.TeacherText(teacher):find("at auction", 1, true) ~= nil, "with its auction price when it has one: " .. P.TeacherText(teacher))
+  -- On the graph card and in the side panel.
+  ns.Open(product) RunTimers()
+  local card, side
+  for _, fr in ipairs(frames) do
+    if fr.node and fr.node.id == product and fr.teach then card = fr end
+    if fr.week and fr.chartMode then side = fr end
+  end
+  check(card and card.teach:IsShown() and card.teach.teacher == teacher, "the card carries the mark, showing the teaching item")
+  check(side.teach:IsShown() and side.teach.teacher == teacher, "and so does the side panel")
+  card.teach.scripts.OnEnter(card.teach) card.teach.scripts.OnLeave(card.teach)
+  card.teach.scripts.OnClick(card.teach)
+  RunTimers()
+  local focused = false
+  for _, fr in ipairs(frames) do if fr.node and fr.shown and fr.node.id == teacher then focused = true end end
+  check(focused, "clicking the mark looks the teaching item up")
+  -- Learned: the mark goes.
+  P.Knows = oldKnows
+  P.version = P.version + 1
+  ns.Open(product) RunTimers()
+  check(P.RecipeState(spell) ~= "unlearned" or not oldKnows(spell), "state follows what is learned")
+  if oldKnows(spell) then
+    check(not card.teach:IsShown() and not side.teach:IsShown(), "once learned the mark is gone")
+  end
+  -- A profession the player does not have is not marked.
+  local foreign
+  for s2, r in pairs(ns.Data.recipes) do
+    if not skills[r[1]] then foreign = s2 break end
+  end
+  if foreign then check(P.RecipeState(foreign) == "noskill", "a recipe of a profession you lack is not \"unlearned\"") end
+  ns.realm.items[teacher] = nil
+  ns.generation = ns.generation + 1
 end
 
 ------------------------------------------------------------------------------

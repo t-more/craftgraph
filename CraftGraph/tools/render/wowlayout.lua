@@ -271,7 +271,7 @@ function W:SetTexture(t) self._texture, self._color = t, nil end
 function W:SetAtlas(a) self._atlas, self._color = a, nil end
 function W:SetTexCoord(...) self._coord = { ... } end
 function W:SetVertexColor(r, g, b, a) self._vertex = { r, g, b, a or 1 } end
-function W:SetGradient(_, a, b) self._grad = { a, b } end
+function W:SetGradient(orientation, a, b) self._grad = { a, b, orientation } end
 function W:SetRotation(r) self._rotation = r end
 function W:SetTextColor(r, g, b, a) self._tcolor = { r, g, b, a or 1 } end
 function W:SetJustifyH(j) self._justifyH = j end
@@ -579,7 +579,8 @@ local function DrawTexture(r, rect, alpha)
   if r._grad then
     defN = defN + 1
     local a, b = r._grad[1], r._grad[2]
-    defs[#defs + 1] = string.format('<linearGradient id="g%d" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="%s" stop-opacity="%.3f"/><stop offset="1" stop-color="%s" stop-opacity="%.3f"/></linearGradient>',
+    local across = r._grad[3] == "HORIZONTAL"
+    defs[#defs + 1] = string.format('<linearGradient id="g%d" ' .. (across and 'x1="0" y1="0" x2="1" y2="0"' or 'x1="0" y1="1" x2="0" y2="0"') .. '><stop offset="0" stop-color="%s" stop-opacity="%.3f"/><stop offset="1" stop-color="%s" stop-opacity="%.3f"/></linearGradient>',
       defN, rgb(a), (a.a or 1) * alpha, rgb(b), (b.a or 1) * alpha)
     emit(string.format('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="url(#g%d)"/>', x, y, w, h, defN))
     return

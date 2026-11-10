@@ -29,7 +29,8 @@ line carries what one craft of the thing it leads to earns, such as `+35c/craft`
 
 ## What to make: the golden rim
 Every craftable card is scored and the scores are compared across what is on screen. The more
-golden a card's rim, the better it is to make; the best one breathes.
+golden a card's glow, the better it is to make; the best one breathes, and a glint crosses it now
+and then.
 
 ![The golden rim and the buy slider](../media/rank.gif)
 
@@ -44,6 +45,14 @@ golden a card's rim, the better it is to make; the best one breathes.
   market allows. Drag, click or scroll it.
 - **Cautious on purpose.** A score is the estimate less its margin, so a craft that only looks
   good because its prices are unsure does not win. Hover a card for the numbers behind its rank.
+
+## Recipes you have not learned
+If you have the profession for something but have not learned its recipe, a small mark sits on
+the top right corner of its icon: the item that teaches the recipe (a pattern, plans, a formula),
+or a book when a trainer teaches it. Hover it for where to get it and what it costs at auction;
+click it to look the recipe up. The same mark appears in the side panel and in the lists.
+
+![The mark for a recipe not learned](../media/unlearned-tip.png)
 
 **Moving around:** click a card to centre it, drag to pan, mouse wheel to zoom. The mouse's back
 and forward buttons go back and forward.

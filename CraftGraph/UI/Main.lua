@@ -74,6 +74,60 @@ local function Text(parent, font, justify)
   return fs
 end
 
+-- The mark for "you could make this if you learned the recipe": a small
+-- button on the top right corner of an item's icon, showing the item that
+-- teaches the recipe (or a book when a trainer does). Hover for where to
+-- get it; click to look the teaching item up.
+local BOOK_ICON = "Interface\\Icons\\INV_Misc_Book_09"
+
+function UI.CreateTeachMark(parent, icon, size)
+  local mark = CreateFrame("Button", nil, parent)
+  mark:SetSize(size, size)
+  mark:SetPoint("CENTER", icon, "TOPRIGHT", -1, -1)
+  mark.rim = mark:CreateTexture(nil, "BACKGROUND")
+  mark.rim:SetPoint("TOPLEFT", -1, 1)
+  mark.rim:SetPoint("BOTTOMRIGHT", 1, -1)
+  mark.rim:SetColorTexture(0.45, 0.75, 1, 1)
+  mark.icon = mark:CreateTexture(nil, "ARTWORK")
+  mark.icon:SetAllPoints()
+  mark.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+  mark:SetScript("OnEnter", function(self)
+    if not self.item then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Recipe not learned", 0.45, 0.75, 1)
+    GameTooltip:AddLine("You have the profession for " .. ns.ItemName(self.item) .. " but have not learned to make it.",
+      1, 1, 1, true)
+    GameTooltip:AddLine(ns.Player.TeacherText(self.teacher), 1, 0.82, 0, true)
+    if self.teacher then GameTooltip:AddLine("Click to look the recipe up.", 0.6, 0.6, 0.6) end
+    GameTooltip:Show()
+  end)
+  mark:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  mark:SetScript("OnClick", function(self)
+    if self.teacher then
+      UI.Remember()
+      UI.ShowGraph()
+      UI.Focus(self.teacher)
+    end
+  end)
+  mark:Hide()
+  return mark
+end
+
+-- Shows the mark for an item, or hides it when the item is not one the
+-- player could make by learning a recipe.
+function UI.SetTeachMark(mark, id)
+  local spell, teacher
+  if id then spell, teacher = ns.Player.Unlearned(id) end
+  mark.item, mark.teacher = spell and id or nil, teacher
+  if spell then
+    mark.icon:SetTexture(teacher and ns.ItemIcon(teacher) or BOOK_ICON)
+    mark:Show()
+  else
+    mark:Hide()
+  end
+  return spell ~= nil
+end
+
 local function Tip(widget, title, body)
   widget:HookScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
@@ -105,6 +159,7 @@ local function CreatePanel(parent)
   p.iconBorder = p:CreateTexture(nil, "OVERLAY")
   p.iconBorder:SetTexture("Interface\\Common\\WhiteIconFrame")
   p.iconBorder:SetAllPoints(p.icon)
+  p.teach = UI.CreateTeachMark(p, p.icon, 18)
   p.name = Text(p, "GameFontNormalLarge")
   p.name:SetPoint("TOPLEFT", p.icon, "TOPRIGHT", 10, -2)
   p.name:SetPoint("TOPRIGHT", p, "TOPRIGHT", -10, -14)
@@ -380,6 +435,7 @@ local function UpdatePanel()
   local r, g, b = ns.ItemColor(id)
   p.icon:SetTexture(ns.ItemIcon(id))
   p.iconBorder:SetVertexColor(r, g, b)
+  UI.SetTeachMark(p.teach, id)
   -- A long name drops to the smaller font rather than being cut off.
   p.name:SetFontObject("GameFontNormalLarge")
   p.name:SetText(ns.ItemName(id))
@@ -983,6 +1039,7 @@ local function CreateWorth(parent)
     row.icon:SetSize(17, 17)
     row.icon:SetPoint("LEFT", 6, 0)
     row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    row.teach = UI.CreateTeachMark(row, row.icon, 10)
     row.name = Text(row, "GameFontHighlightSmall")
     row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
     row.name:SetWidth(190)
@@ -1149,6 +1206,7 @@ function UI.UpdateWorth()
         row.icon:SetTexture(133784)
         row.name:SetTextColor(1, 1, 1)
       end
+      UI.SetTeachMark(row.teach, (d.kind == "craft" or d.craft) and d.id or nil)
       row.name:SetText(DealName(d) .. (d.guess and " |cffff8c33?|r" or ""))
       local t = KIND_TINT[d.kind]
       row.kind:SetText(d.how or Deals.KIND[d.kind])

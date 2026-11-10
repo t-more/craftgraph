@@ -9,4 +9,6 @@ out="$here/dist/CraftGraph-$version.zip"
 rm -f "$out"
 cd "$here"
 zip -qr "$out" CraftGraph -x 'CraftGraph/tools/*' -x '*/__pycache__/*'
+# The Windows installer sits beside the CraftGraph folder in the zip.
+(cd "$here/windows" && zip -q "$out" "Install CraftGraph.cmd" install.ps1)
 echo "$out"

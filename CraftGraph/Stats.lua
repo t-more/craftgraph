@@ -445,6 +445,9 @@ function S.ForItem(id)
     cache, cacheGen = {}, ns.generation
   end
   local entry = cache[id]
+  -- "Now" moves even when no price does: an estimate older than five
+  -- minutes is worked out again, so forecasts start from the present.
+  if entry and time() - entry.now > 300 then entry = nil end
   if entry == nil then
     local series = ns.Market.Series(id)
     local now = time()

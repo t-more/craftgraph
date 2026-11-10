@@ -1104,7 +1104,7 @@ do
     st = J.TrackStats(pin)
     check(st.n == 3 and st.median and st.mean and st.low <= st.median and st.median <= st.high,
       "with three readings it has a median and an average")
-    check(ns.UI.GoalText(pin):find("median", 1, true) ~= nil and ns.UI.GoalText(pin):find("average", 1, true) ~= nil,
+    check(ns.UI.GoalText(pin):find("med", 1, true) ~= nil and ns.UI.GoalText(pin):find("avg", 1, true) ~= nil,
       "both are shown: " .. ns.UI.GoalText(pin))
     now = now + 10
     price(d.id, { { ladderBefore, d.qty }, { ladderBefore + 30, 50 } })
@@ -1691,6 +1691,194 @@ do
   C_AuctionHouse.ReplicateItems = oldReplicate
   FireEvent("AUCTION_HOUSE_CLOSED")
   RunTimers()
+end
+
+------------------------------------------------------------------------------
+-- Found in review: each of these was a real fault once.
+do
+  local M, S, J = ns.Market, ns.Stats, ns.Jobs
+  -- Scans ten minutes apart with moving prices must each keep their point.
+  local id = 2595
+  ns.realm.items[id] = nil
+  for step = 36, 0, -1 do
+    M.Record(id, { { 300 + step * 3, 40 + step } }, { full = true, t = now - step * 600 })
+  end
+  local kept = #M.History(M.Get(id)) / 4
+  check(kept == 37, "37 scans ten minutes apart keep 37 points, not one: " .. kept)
+  -- The same scan arriving twice within minutes is still one point.
+  M.Record(id, { { 301, 40 } }, { full = true, t = now + 60 })
+  M.Record(id, { { 302, 40 } }, { full = true, t = now + 120 })
+  check(#M.History(M.Get(id)) / 4 == 37, "results a minute apart are one scan")
+  -- A result stamped earlier than the last point does not run time backwards.
+  M.Record(id, { { 310, 40 } }, { full = true, t = now - 5000 })
+  local h = M.History(M.Get(id))
+  local ordered = true
+  for i = 5, #h, 4 do if h[i] < h[i - 4] then ordered = false end end
+  check(ordered, "history never steps back in time")
+  local round = M.Unpack(M.Pack({ 1000, 5, 5, 1, 990, 6, 6, 1, 1200, 7, 7, 1 }))
+  check(round[5] == 1000 and round[9] == 1200, "packing a step back keeps the later times right")
+  ns.realm.items[id] = nil
+
+  -- The model's "now" follows the clock even when no price changes.
+  local mid = 2596
+  ns.realm.items[mid] = nil
+  M.Record(mid, { { 400, 10 } }, { full = true, t = now - 100 })
+  local before = S.ForItem(mid).now
+  now = now + 7200
+  check(S.ForItem(mid).now == before + 7200, "two idle hours later the estimate is worked out from the present")
+  now = now - 7200
+  ns.generation = ns.generation + 1
+  ns.realm.items[mid] = nil
+
+  -- Buying from an offer refuses when the listings cost more than the offer counted on.
+  local bid = 2597
+  ns.realm.items[bid] = nil
+  M.Record(bid, { { 50, 10 }, { 90, 10 } }, { full = true, t = now })
+  M.Get(bid).k = "c"
+  local started
+  local oldStart = C_AuctionHouse.StartCommoditiesPurchase
+  C_AuctionHouse.StartCommoditiesPurchase = function(item, qty) started = { item, qty } end
+  local wasOpen = M.ahOpen
+  M.ahOpen = true
+  check(J.BuyAuction(bid, 10, 300) == false and started == nil,
+    "an offer made at 30 each is not bought at 50 each")
+  check(J.BuyAuction(bid, 10, 500) ~= false and started and started[2] == 10,
+    "the same offer goes through when the listings still cost what it counted on")
+  FireEvent("AUCTION_HOUSE_CLOSED") RunTimers()
+  M.ahOpen = wasOpen
+  C_AuctionHouse.StartCommoditiesPurchase = oldStart
+  -- A plan for more than is listed says so and does not count the rest as free.
+  local proj = J.Projection(bid, 30, { kind = "flip", qty = 30, outlay = 1500, sellEach = 80 })
+  check(proj.short == 10 and proj.cost >= 10 * 50 + 10 * 90 + 10 * 90,
+    "units that are not listed are counted at the dearest price: " .. tostring(proj.cost))
+  ns.realm.items[bid] = nil
+
+  -- A full scan that gets no answer does not hold up the item lookups.
+  local asked = 0
+  local oldReplicate = C_AuctionHouse.ReplicateItems
+  C_AuctionHouse.ReplicateItems = function() asked = asked + 1 end
+  ns.settings.autoScan = true
+  ns.db.lastFullScan, ns.db.lastAutoScan, M.autoHold, M.fullPending, M.autoMisses = nil, now - 3600, nil, nil, nil
+  M.autoItems = function() return { 2835 } end
+  M.ahOpen = true
+  M.AutoTick()
+  check(asked == 1, "the full scan is asked for")
+  M.fullPending = nil
+  ns.Fire("FULLSCAN", "timeout")
+  sentQueries = {}
+  M.AutoTick()
+  check(asked == 1 and sentQueries[1] == 2835, "after no answer, the item lookups still run")
+  FireEvent("COMMODITY_SEARCH_RESULTS_UPDATED", 2835) RunTimers()
+  local firstHold = M.autoHold - now
+  ns.Fire("FULLSCAN", "timeout")
+  check(firstHold == 300 and M.autoHold - now == 600, "each miss waits longer before asking again")
+  -- Hand trading in the standard window holds the lookups back.
+  AuctionHouseFrameDisplayMode = { CommoditiesBuy = {}, ItemBuy = {}, CommoditiesSell = {}, ItemSell = {}, Buy = {} }
+  local page = AuctionHouseFrameDisplayMode.CommoditiesBuy
+  AuctionHouseFrame = { IsShown = function() return true end, GetDisplayMode = function() return page end }
+  ns.db.lastAutoScan = now - 3600
+  sentQueries = {}
+  M.AutoTick()
+  check(#sentQueries == 0, "no lookups while you are on a buy page of the auction window")
+  page = AuctionHouseFrameDisplayMode.Buy
+  M.AutoTick()
+  check(sentQueries[1] == 2835, "they resume on the browse page")
+  FireEvent("COMMODITY_SEARCH_RESULTS_UPDATED", 2835) RunTimers()
+  AuctionHouseFrame, AuctionHouseFrameDisplayMode = nil, nil
+  C_AuctionHouse.ReplicateItems = oldReplicate
+  M.autoHold, M.autoMisses, M.fullPending = nil, nil, nil
+  ns.db.lastFullScan = now
+  FireEvent("AUCTION_HOUSE_CLOSED") RunTimers()
+end
+
+------------------------------------------------------------------------------
+-- Sales seen between full scans
+do
+  local M = ns.Market
+  local id = 2598
+  ns.realm.items[id] = nil
+  local function auctions(list)
+    local out = {}
+    for _, a in ipairs(list) do
+      for _ = 1, a.n do out[#out + 1] = { a.unit, a.count, a.owner, a.band } end
+    end
+    return out
+  end
+  local t0 = now - 3600
+  check(M.TrackSales(id, auctions({
+    { n = 10, unit = 100, count = 20, owner = "Anna", band = 3 },
+    { n = 5, unit = 150, count = 20, owner = "Bo", band = 3 },
+    { n = 2, unit = 90, count = 20, owner = "Cy", band = 0 },
+  }), t0) == nil, "the first full scan has nothing to compare with")
+  check(M.Sales(id) == nil, "so there is no selling rate yet")
+  -- An hour later: 4 of Anna's are gone; Bo took his 5 down and put 5 up
+  -- cheaper; Cy's 2 had under half an hour left and are gone.
+  local sold = M.TrackSales(id, auctions({
+    { n = 6, unit = 100, count = 20, owner = "Anna", band = 3 },
+    { n = 5, unit = 140, count = 20, owner = "Bo", band = 3 },
+  }), now)
+  check(sold and sold > 70 and sold < 95, string.format("Anna's 4 stacks count as sold, the rest hardly: %.1f units", sold or -1))
+  local s = M.Sales(id)
+  check(s and near(s.units, sold) and near(s.days, 1 / 24, 1e-6) and s.auctions > 3 and s.auctions < 5,
+    "the belief holds the units, the auctions and the hour watched")
+  check(s.lo < s.rate and s.rate < s.hi and s.lo > 0, string.format("it gives a rate with a range: %.0f a day (%.0f to %.0f)", s.rate, s.lo, s.hi))
+  check(s.sellers.Anna and s.sellers.Anna > 70 and (s.sellers.Bo or 0) < 5 and not s.sellers.Cy,
+    "sales are credited to the seller whose auctions went")
+  -- Nothing vanishes for six more hours: the rate comes down and the range tightens.
+  local before = s.rate
+  for h = 1, 6 do
+    M.TrackSales(id, auctions({
+      { n = 6, unit = 100, count = 20, owner = "Anna", band = 3 },
+      { n = 5, unit = 140, count = 20, owner = "Bo", band = 3 },
+    }), now + h * 3600)
+  end
+  s = M.Sales(id)
+  check(s.rate < before / 3 and near(s.days, 7 / 24, 0.01), string.format("six quiet hours bring the rate down: %.0f a day", s.rate))
+  -- A dear auction that vanishes while cheaper ones stay is hardly counted.
+  local dear = M.TrackSales(id, auctions({
+    { n = 6, unit = 100, count = 20, owner = "Anna", band = 3 },
+    { n = 4, unit = 140, count = 20, owner = "Bo", band = 3 },
+  }), now + 7 * 3600)
+  check(dear < 6, string.format("one of Bo's dearer stacks going is mostly not a sale: %.1f", dear))
+  -- Scans too far apart are not compared.
+  check(M.TrackSales(id, auctions({ { n = 1, unit = 100, count = 20, owner = "Anna", band = 3 } }), now + 40 * 3600) == nil,
+    "scans more than twelve hours apart are not compared")
+  -- An item nobody watched for a day with no sales still gets an answer, and names with spaces or none survive.
+  local quiet = 2599
+  ns.realm.items[quiet] = nil
+  M.TrackSales(quiet, auctions({ { n = 3, unit = 50, count = 1, band = 3 } }), now - 7200)
+  M.TrackSales(quiet, auctions({ { n = 3, unit = 50, count = 1, band = 3 } }), now)
+  local q = M.Sales(quiet)
+  check(q and q.units == 0 and q.rate < 6 and q.lo >= 0, string.format("no sales in two hours: a low rate, not none (%.1f a day)", q and q.rate or -1))
+  -- The source can be switched off.
+  ns.Market.Record(id, { { 100, 120 } }, { full = true, t = now })
+  local info = M.Info(id)
+  check(info.sales ~= nil and info.turnover == M.Sales(id).rate, "the selling rate feeds the item's turnover")
+  M.SetSource("Sales", false)
+  check(M.Sales(id) == nil and M.Info(id).sales == nil, "switched off, the tracked sales are not used")
+  check(ns.UI.SourcesText() and ns.UI.SourcesText():find("Sales seen", 1, true) ~= nil, "and the window says which source is off")
+  M.SetSource("Sales", true)
+  check(M.Sales(id) ~= nil and ns.UI.SourcesText() == nil, "switched on again, they are")
+  ns.UI.ToggleSources()
+  check(ns.UI.sourcesFrame:IsShown() and #ns.UI.sourcesFrame.rows == 3, "the data sources window opens with its three switches")
+  local row = ns.UI.sourcesFrame.rows[2]
+  row.check:SetChecked(false)
+  row.check.scripts.OnClick(row.check)
+  check(M.Source("Auctionator") == false, "unticking Auctionator switches it off")
+  row.check:SetChecked(true)
+  row.check.scripts.OnClick(row.check)
+  ns.UI.ToggleSources()
+  SlashCmdList.CRAFTGRAPH("sources")
+  check(ns.UI.sourcesFrame:IsShown(), "/cg sources opens it too")
+  ns.UI.ToggleSources()
+  -- Trends names the rate.
+  ns.Open(id)
+  ns.UI.ShowTrends(true) RunTimers()
+  local view
+  for _, f in ipairs(frames) do if f.options and f.facts then view = f end end
+  check(view.facts.text:find("Sells about", 1, true) ~= nil, "Trends says how fast it sells: " .. view.facts.text)
+  ns.UI.ShowTrends(false)
+  ns.realm.items[id], ns.realm.items[quiet] = nil, nil
 end
 
 ------------------------------------------------------------------------------

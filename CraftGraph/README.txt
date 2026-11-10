@@ -25,6 +25,11 @@ What it does
   These fill in as you scan at different times.
 
 Install
+  On Windows: unzip the download, quit the game, and double-click
+  "Install CraftGraph". It finds the game and copies the addon in. Windows
+  may ask whether to run it; the installer is a plain script (install.ps1)
+  that you can open in Notepad to see what it does.
+  By hand, on any system:
   1. Quit the game completely.
   2. Put the CraftGraph folder in:
        World of Warcraft/_forever_/Interface/AddOns/
@@ -50,6 +55,23 @@ What needs what
     - room for heavier analysis later than is sensible to run in the game.
   Both are described below. Without Python nothing is missing in the game;
   the history is simply coarser once it is older than two days.
+
+How fast things sell
+  Each full scan lists every auction with its seller and a rough time left.
+  CraftGraph compares each full scan with the one before: an auction that
+  is gone was sold, cancelled or ran out. Each gone auction gets a chance of
+  having sold (less if its time was nearly up, if its seller relisted, or if
+  cheaper ones were left standing), and from those the selling rate per day
+  is estimated with a range. It needs two full scans within twelve hours.
+  With scans hours apart a busy item reads too low and is shown as "at
+  least". Trends shows the rate and which sellers' auctions sold.
+
+Data sources
+  Your own scans always count. Three second opinions can be switched off
+  and on to see what each one changes: Blizzard's hourly data (optional
+  sync tool), Auctionator's prices, and the sales seen between full scans.
+  Click the status line under the graph, the "Data sources" button beside
+  the auction window, or type /cg sources.
 
 Planning and timing
   "Opportunities" lists every way to make money now. Two more filters there:

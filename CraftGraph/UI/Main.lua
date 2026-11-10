@@ -514,6 +514,8 @@ local function UpdateStatus(progress, hold)
   elseif ns.Online and ns.Online.realm then
     online = GREY .. "  Online prices are for another auction house and are not used.|r"
   end
+  local switchedOff = UI.SourcesText()
+  if switchedOff then online = "  " .. switchedOff end
   if known == 0 then
     statusText:SetText(GREY .. "No prices yet. Open the auction house and press Scan prices.|r" .. online)
   else
@@ -658,6 +660,10 @@ local function AddProjection(proj)
   end
   GameTooltip:AddLine("Costs " .. ns.Money(proj.cost) .. " for " .. ns.Round(proj.units) .. ", at "
     .. ns.Money(proj.priceNow) .. " each now. The ranges hold about two times in three.", 0.6, 0.6, 0.6, true)
+  if proj.short then
+    GameTooltip:AddLine("Only part of this is listed: " .. ns.Round(proj.short)
+      .. " more are counted at the dearest listed price.", 1, 0.55, 0.2, true)
+  end
   if proj.id then GameTooltip:AddLine("Prices: " .. UI.ScanAgeText(proj.id), 1, 1, 1) end
 end
 UI.AddProjection = AddProjection
@@ -780,7 +786,7 @@ local function DealAction(d)
       end
     elseif M.ahOpen and not d.stale then
       return "Buy " .. ns.Round(d.qty), true, function()
-        if IsShiftKeyDown() then plan() else J.BuyAuction(d.id, d.qty) end
+        if IsShiftKeyDown() then plan() else J.BuyAuction(d.id, d.qty, d.outlay) end
       end, "Buys this amount at the price shown; nothing is bought if the price has moved up. "
         .. "Shift-click to add it to your plan instead."
     end
@@ -1882,6 +1888,22 @@ function UI.UpdateTrends()
     end
   end
 
+  -- How fast it sells, from the auctions that vanished between full scans.
+  do
+    local sales = ns.Market.Sales(id)
+    if sales then
+      local function N(x) return x >= 10 and ns.Round(x) or string.format("%.1f", x) end
+      local watched = sales.days >= 1 and (N(sales.days) .. " days") or (ns.Round(sales.days * 24 * 10) / 10 .. " h")
+      if sales.floor then
+        facts[#facts + 1] = "Sells at least " .. N(sales.lo) .. " a day: most of what was cheap enough went between "
+          .. "full scans, so more sold unseen (" .. watched .. " watched). Scan more often for a real figure."
+      else
+        facts[#facts + 1] = "Sells about " .. N(sales.rate) .. " a day (" .. N(sales.lo) .. " to " .. N(sales.hi)
+          .. "), judged from " .. N(sales.units) .. " sold over " .. watched .. " between full scans."
+      end
+    end
+  end
+
   -- The bar chart.
   local weekMode = trendPeriod == "week"
   local slots = trendPeriod == "hour" and 24 or weekMode and 168 or 7
@@ -2134,6 +2156,7 @@ function UI.UpdateTrends()
   HideShareRows(f.stackRows, nStack + 1)
 
   -- Sellers.
+  local salesSeen = ns.Market.Sales(id)
   local sellers = it and it.sl
   local nSeller = 0
   if sellers and sellers[1] then
@@ -2153,7 +2176,9 @@ function UI.UpdateTrends()
       row.bar:SetColorTexture(0.45, 0.75, 1, 0.75)
       row.bar:SetWidth(max(1.5, row.barWidth * min(1, share)))
       row.bar:Show()
-      row.value:SetText(ns.Round(sellers[i + 1]) .. GREY .. " (" .. ns.Round(share * 100) .. "%), seen " .. seen .. "x|r")
+      local soldBy = salesSeen and salesSeen.sellers and salesSeen.sellers[sellers[i]]
+      row.value:SetText(ns.Round(sellers[i + 1]) .. GREY .. " (" .. ns.Round(share * 100) .. "%), seen " .. seen .. "x|r"
+        .. ((soldBy and soldBy >= 0.5) and (" |cff40ff40sold ~" .. ns.Round(soldBy) .. "|r") or ""))
     end
   else
     f.sellerTitle:SetText("Sellers at the last scan")
@@ -2287,7 +2312,7 @@ end
 -- buy at auction, collect mail, buy from a vendor, craft, post.
 ------------------------------------------------------------------------------
 local hud
-local HUD_W, HUD_ROW = 350, 66
+local HUD_W, HUD_ROW = 370, 66
 local KIND_COLOR = {
   ah = { 1, 0.82, 0 }, mail = { 0.45, 0.75, 1 }, vendor = { 0.4, 1, 0.4 }, craft = { 1, 0.6, 0.25 },
   sell = { 0.4, 1, 0.4 }, done = { 0.6, 0.6, 0.6 }, stuck = { 1, 0.35, 0.3 },
@@ -2478,7 +2503,7 @@ function UI.GoalText(pin)
     text = text .. (moved < 0 and " |cffff5040down " or " |cff40ff40up ") .. ns.Money(math.abs(Short(moved))) .. "|r"
   end
   if st.n >= 3 then
-    text = text .. GREY .. "  median|r " .. Signed(Short(st.median)) .. GREY .. "  average|r " .. Signed(Short(st.mean))
+    text = text .. GREY .. "  med|r " .. Signed(Short(st.median)) .. GREY .. "  avg|r " .. Signed(Short(st.mean))
   end
   return text
 end
@@ -2887,6 +2912,14 @@ local function Create()
   statusText:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -(PANEL_W + 16 + 270), 10)
   statusText:SetWordWrap(false)
 
+  -- Clicking the status line opens the data sources.
+  local statusHit = CreateFrame("Button", nil, frame)
+  statusHit:SetPoint("TOPLEFT", statusText, "TOPLEFT", 0, 4)
+  statusHit:SetPoint("BOTTOMRIGHT", statusText, "BOTTOMRIGHT", 0, -4)
+  statusHit:SetScript("OnClick", function() ns.Safe(UI.ToggleSources) end)
+  Tip(statusHit, "Data sources", "Click to switch data sources on and off: Blizzard's hourly data, "
+    .. "Auctionator's prices, and sales seen between full scans. Also /cg sources.")
+
   -- Auto scan: the switch, and beside it what it is doing or waiting for.
   local auto = CreateFrame("CheckButton", nil, frame, "UICheckButtonTemplate")
   auto:SetSize(22, 22)
@@ -3235,7 +3268,114 @@ local function AddAuctionHouseButton()
   end)
   auto:SetScript("OnLeave", function() GameTooltip:Hide() end)
   UI.autoCheck = auto
+
+  local src = CreateFrame("Button", nil, AuctionHouseFrame, "UIPanelButtonTemplate")
+  src:SetSize(96, 22)
+  src:SetText("Data sources")
+  src:SetPoint("TOPLEFT", auto, "BOTTOMLEFT", 2, -2)
+  src:SetScript("OnClick", function() ns.Safe(UI.ToggleSources) end)
 end
+
+------------------------------------------------------------------------------
+-- Data sources: switch each one off and on to see what it changes. Your
+-- own scans are always used; the rest are second opinions that may be wrong.
+------------------------------------------------------------------------------
+local sourcesFrame
+local SOURCES = {
+  { key = "Online", text = "Blizzard's hourly data",
+    note = function()
+      local _, o = ns.Market.Online(0)
+      if o then return "from " .. ns.Age(time() - (o.updated or 0)) end
+      if ns.Online and ns.Online.realm and ns.Online.realm ~= ns.realmKey then return "for another auction house" end
+      if ns.Online then return "switched off" end
+      return "not set up (optional, needs Python)"
+    end,
+    tip = "Prices, depth and sales from Blizzard's hourly auction data, brought in by the optional sync "
+      .. "tool. Used where it is newer than your own scan." },
+  { key = "Auctionator", text = "Auctionator's prices",
+    note = function() return _G.Auctionator and "installed" or "not installed" end,
+    tip = "Auctionator's last price for items you have not scanned here, and its older daily history." },
+  { key = "Sales", text = "Sales seen between full scans",
+    note = function()
+      local n = 0
+      for _, it in pairs(ns.realm and ns.realm.items or {}) do if it.sb then n = n + 1 end end
+      return n > 0 and (n .. " items watched") or "needs two full scans within 12 hours"
+    end,
+    tip = "How fast things sell, judged from auctions that vanish between two full scans (not the ones "
+      .. "that ran out or were relisted). Off, the cruder guess from price levels is used." },
+}
+
+function UI.SourcesText()
+  local off = {}
+  for _, def in ipairs(SOURCES) do
+    if not ns.Market.Source(def.key) then off[#off + 1] = def.text end
+  end
+  if #off == 0 then return nil end
+  return "|cffff8c33Switched off: " .. table.concat(off, ", ") .. ".|r"
+end
+
+local function UpdateSources()
+  if not sourcesFrame then return end
+  for _, row in ipairs(sourcesFrame.rows) do
+    row.check:SetChecked(ns.Market.Source(row.def.key))
+    row.note:SetText(GREY .. row.def.note() .. "|r")
+  end
+end
+
+function UI.ToggleSources()
+  if not sourcesFrame then
+    local f = CreateFrame("Frame", "CraftGraphSources", UIParent, "BackdropTemplate")
+    f:SetSize(330, 62 + #SOURCES * 38)
+    f:SetPoint("CENTER", 0, 80)
+    f:SetFrameStrata("DIALOG")
+    f:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
+      insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    local title = Text(f, "GameFontNormal")
+    title:SetPoint("TOPLEFT", 12, -10)
+    title:SetText("Data sources")
+    local own = Text(f, "GameFontHighlightSmall")
+    own:SetPoint("TOPLEFT", 12, -30)
+    own:SetText("Your own scans are always used. Untick one to see the numbers without it.")
+    own:SetPoint("TOPRIGHT", -12, -30)
+    own:SetWordWrap(true)
+    own:SetMaxLines(2)
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", 2, 2)
+    f.rows = {}
+    for i, def in ipairs(SOURCES) do
+      local y = -58 - (i - 1) * 38
+      local check = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+      check:SetSize(24, 24)
+      check:SetPoint("TOPLEFT", 10, y)
+      check:SetScript("OnClick", function(self)
+        ns.Market.SetSource(def.key, self:GetChecked() and true or false)
+      end)
+      Tip(check, def.text, def.tip)
+      local label = Text(f, "GameFontHighlight")
+      label:SetPoint("TOPLEFT", check, "TOPRIGHT", 2, -2)
+      label:SetText(def.text)
+      local note = Text(f, "GameFontDisableSmall")
+      note:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -2)
+      f.rows[i] = { check = check, note = note, def = def }
+    end
+    tinsert(UISpecialFrames, "CraftGraphSources")
+    f:Hide()
+    sourcesFrame = f
+    UI.sourcesFrame = f
+  end
+  sourcesFrame:SetShown(not sourcesFrame:IsShown())
+  UpdateSources()
+end
+
+ns.Listen("SOURCES", function()
+  UpdateSources()
+end)
 
 -- What the auto scan is doing, in a few words, beside its switch.
 function UI.AutoText()

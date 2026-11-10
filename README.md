@@ -20,6 +20,10 @@ the game; `lua5.1` is needed only to run the offline checks.
     ./install.sh     copy the addon into the game (then /cg reload in game)
     ./package.sh     build dist/CraftGraph-<version>.zip to share
 
+`windows/` holds the installer that goes into the zip for friends on Windows:
+`Install CraftGraph.cmd` (double-click) starts `install.ps1`. It has not been
+run on a Windows machine yet.
+
 `install.sh --check` shows what would change without changing it. A full game
 restart is only needed when a file is added or `CraftGraph.toc` changes.
 
@@ -54,6 +58,11 @@ restart is only needed when a file is added or `CraftGraph.toc` changes.
     cd CraftGraph
     lua5.1 tools/backtest.lua . tools/stats_v1.lua 6
     lua5.1 tools/backtest_real.lua . tools/stats_v1.lua <path to SavedVariables/CraftGraph.lua>
+
+`lua5.1 tools/backtest_sales.lua` does the same for the sales estimate in
+`Market.lua` (a simulated item with a known selling rate), and
+`tools/qa_real.lua`, `tools/qa_fit.lua` and `tools/qa_empty.lua` run the whole
+addon on a real saved file, estimate label fit, and exercise an empty install.
 
 Run both before changing a setting in `Stats.lua`. Where they disagree, trust
 the real scans.

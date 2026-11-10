@@ -7,7 +7,8 @@ ns.Market = M
 
 local floor, ceil, min, max = math.floor, math.ceil, math.min, math.max
 
-local HISTORY_MERGE_SECONDS = 20 * 60   -- newer point replaces one this recent
+local HISTORY_MERGE_SECONDS = 20 * 60   -- an online snapshot this close to an own scan is the same moment
+local SAME_SCAN_SECONDS = 5 * 60        -- results this close together are one scan, not two
 local TURNOVER_MIN_GAP = 10 * 60
 local TURNOVER_MAX_GAP = 3 * 86400
 M.SUMMARY_SLOPE = 0.6                   -- assumed price rise across a ladder we have not seen
@@ -150,7 +151,7 @@ local function Pack(flat)
   if not flat[1] then return nil end
   local parts, last = {}, 0
   for i = 1, #flat, 4 do
-    local t = floor(flat[i])
+    local t = max(floor(flat[i]), last)        -- never a step back in time
     parts[#parts + 1] = (t - last) .. "," .. floor(flat[i + 1] + 0.5) .. ","
       .. floor(flat[i + 2] + 0.5) .. "," .. floor(flat[i + 3] + 0.5)
     last = t
@@ -247,10 +248,18 @@ end
 local function AppendHistory(it, t, price, robust, total)
   local h = it.h
   local n = #h
+  -- History runs forward: a result stamped earlier than the last point
+  -- (a full scan stored after a later lookup) is put at that point's time.
+  if n >= 4 and t < h[n - 3] then t = h[n - 3] end
   -- "Still none listed" adds nothing new.
   if price == 0 and n >= 4 and h[n - 2] == 0 then return end
-  if n >= 4 and t - h[n - 3] < HISTORY_MERGE_SECONDS and (price > 0) == (h[n - 2] > 0) then
-    -- A new point replaces a very recent one, but "none listed" never
+  -- it.ha is when the last point was first written. The window is counted
+  -- from there, not from the point's latest time: otherwise scans a few
+  -- minutes apart would each replace the one before and a whole session
+  -- would shrink to a single point.
+  if n >= 4 and it.ha and t - it.ha < SAME_SCAN_SECONDS and (price > 0) == (h[n - 2] > 0) then
+    -- The same scan seen twice (a lookup and the full list, say): the
+    -- later result replaces the earlier, but "none listed" never
     -- overwrites a real price (or the other way round).
     h[n - 3], h[n - 2], h[n - 1], h[n] = t, price, robust, total
   elseif n >= 8 and price > 0 and h[n - 2] == price and h[n - 6] == price
@@ -261,6 +270,7 @@ local function AppendHistory(it, t, price, robust, total)
     h[n - 3], h[n] = t, total
   else
     h[n + 1], h[n + 2], h[n + 3], h[n + 4] = t, price, robust, total
+    it.ha = t
   end
   if #h >= (it.hn or 0) + 4 * COMPACT_EVERY or (h[1] and t - h[1] > HOT_SECONDS + 86400) then
     Compact(it, t)
@@ -430,7 +440,21 @@ end
 ------------------------------------------------------------------------------
 -- Reading prices
 ------------------------------------------------------------------------------
+-- Data sources beyond the player's own scans can each be switched off, to
+-- see what the numbers are without them: "Online", "Auctionator", "Sales".
+function M.Source(name)
+  return not ns.settings or ns.settings["src" .. name] ~= false
+end
+
+function M.SetSource(name, on)
+  ns.settings["src" .. name] = on and true or false
+  ns.generation = ns.generation + 1
+  ns.Fire("SOURCES")
+  ns.Fire("MARKET_UPDATED")
+end
+
 local function AuctionatorPrice(id)
+  if not M.Source("Auctionator") then return nil end
   local A = _G.Auctionator
   if not (A and A.API and A.API.v1 and A.API.v1.GetAuctionPriceByItemID) then return nil end
   local ok, price = pcall(A.API.v1.GetAuctionPriceByItemID, ADDON, id)
@@ -449,8 +473,247 @@ end
 -- for the auction house the player is on.
 function M.Online(id)
   local o = ns.Online
-  if not o or not o.items or o.realm ~= ns.realmKey then return nil end
+  if not o or not o.items or o.realm ~= ns.realmKey or not M.Source("Online") then return nil end
   return o.items[id], o
+end
+
+------------------------------------------------------------------------------
+-- Sales seen between full scans
+--
+-- A full scan lists every auction with its seller, stack, price and a
+-- rough time left. An auction that was there at one full scan and is gone
+-- at the next was sold, cancelled or ran out. None of the three is shown,
+-- so each vanished auction is given a probability of having sold:
+--   * it may have run out: its time-left band at the earlier scan says how
+--     long it had (between a least and a most), and the chance that it ran
+--     out within the gap is how much of that span the gap covers;
+--   * it may have been cancelled: more likely when the same seller put up
+--     new auctions of the item in the meantime (an undercut and relist);
+--   * buyers take the cheapest first: one that vanished while cheaper ones
+--     stayed was probably not bought.
+-- The units sold are then a count over time, and the selling rate is
+-- estimated the standard Bayesian way for counts: sales arrive at an
+-- unknown rate (Poisson) whose belief is a Gamma distribution, sharpened
+-- by every pair of scans. Old evidence fades (half of its weight a week),
+-- because a young market's demand does not hold still.
+-- Auctions posted and sold between two scans are never seen; the count is
+-- scaled up for them from how quickly the cheap auctions that were seen
+-- went. With scans many hours apart that correction is a guess and the
+-- rate is better read as a floor. tools/backtest_sales.lua measures all of
+-- this against a simulated item whose true rate is known.
+------------------------------------------------------------------------------
+local SALES_MAX_GAP = 12 * 3600       -- scans further apart say too little
+local SALES_MIN_GAP = 4 * 60
+local SALES_HALFLIFE = 7              -- days
+local SALES_PRIOR_UNITS, SALES_PRIOR_DAYS = 0.5, 0.05
+local CANCEL_BASE, CANCEL_RELISTED = 0.10, 0.95
+local SKIPPED_FACTOR = 0.25           -- cheaper ones were left: probably not bought
+local SELLERS_SOLD_KEPT = 12
+local bandInfo = {}
+
+-- The least and most seconds an auction in a time-left band has left.
+local function BandSeconds(band)
+  local b = bandInfo[band]
+  if not b then
+    local lo, hi
+    if C_AuctionHouse and C_AuctionHouse.GetTimeLeftBandInfo then
+      local ok, a, c = pcall(C_AuctionHouse.GetTimeLeftBandInfo, band)
+      if ok and type(a) == "number" and type(c) == "number" then lo, hi = a, c end
+    end
+    if not lo then
+      -- The game's usual bands: under 30 min, to 2 h, to 12 h, to 48 h.
+      local known = { [0] = { 0, 1800 }, { 1800, 7200 }, { 7200, 43200 }, { 43200, 172800 } }
+      local k = known[band] or known[3]
+      lo, hi = k[1], k[2]
+    end
+    b = { lo, hi }
+    bandInfo[band] = b
+  end
+  return b[1], b[2]
+end
+
+-- auctions: { unit price, count, owner or nil, band or nil } per auction.
+-- Returns the snapshot: key -> { n, band, unit, count, owner }.
+local function Snapshot(auctions)
+  local snap = {}
+  for i = 1, #auctions do
+    local a = auctions[i]
+    local owner = type(a[3]) == "string" and a[3] or ""
+    local buyout = floor(a[1] * a[2] + 0.5)
+    local key = owner .. "," .. a[2] .. "," .. buyout
+    local s = snap[key]
+    if not s then
+      s = { n = 0, band = a[4] or 3, unit = a[1], count = a[2], owner = owner }
+      snap[key] = s
+    end
+    s.n = s.n + 1
+    -- Of identical auctions, remember the one nearest its end.
+    if a[4] and a[4] < s.band then s.band = a[4] end
+  end
+  return snap
+end
+
+local function PackSnapshot(snap, t)
+  local parts = { tostring(t) }
+  for key, s in pairs(snap) do
+    parts[#parts + 1] = key .. "," .. s.n .. "," .. s.band
+  end
+  return table.concat(parts, ";")
+end
+
+local function UnpackSnapshot(packed)
+  if type(packed) ~= "string" then return nil end
+  local t = tonumber(packed:match("^(%d+)"))
+  if not t then return nil end
+  local snap = {}
+  for owner, count, buyout, n, band in packed:gmatch(";([^,;]*),(%d+),(%d+),(%d+),(%d+)") do
+    count, buyout = tonumber(count), tonumber(buyout)
+    snap[owner .. "," .. count .. "," .. buyout] = { n = tonumber(n), band = tonumber(band),
+      unit = buyout / count, count = count, owner = owner }
+  end
+  return snap, t
+end
+
+-- Compares this full scan's auctions of an item with the last one's and
+-- updates the belief about how fast it sells. Returns the units judged
+-- sold in the gap (a fraction, since each is a probability), or nil when
+-- the two scans could not be compared.
+function M.TrackSales(id, auctions, now)
+  local it = ItemRecord(id, true)
+  if not it then return nil end
+  local snap = Snapshot(auctions)
+  local old, oldTime = UnpackSnapshot(it.au)
+  it.au = next(snap) and PackSnapshot(snap, now) or tostring(now)
+  if not old then return nil end
+  local gap = now - oldTime
+  if gap < SALES_MIN_GAP or gap > SALES_MAX_GAP then return nil end
+
+  -- Cheapest price among auctions that are still there, and how many new
+  -- auctions each seller put up since.
+  local floorPrice, relisted = math.huge, {}
+  for key, s in pairs(snap) do
+    local before = old[key] and old[key].n or 0
+    if before > 0 and s.unit < floorPrice then floorPrice = s.unit end
+    if s.n > before and s.owner ~= "" then
+      relisted[s.owner] = (relisted[s.owner] or 0) + (s.n - before)
+    end
+  end
+
+  -- How likely an auction was to go for a reason other than running out,
+  -- measured on the ones that could not have run out in this gap.
+  local safe, safeGone, gone = 0, 0, {}
+  for key, o in pairs(old) do
+    local lo, hi = BandSeconds(o.band)
+    local expire = hi > lo and max(0, min(1, (gap - lo) / (hi - lo))) or (gap >= lo and 1 or 0)
+    local left = o.n - (snap[key] and snap[key].n or 0)
+    if expire == 0 then
+      safe = safe + o.n
+      safeGone = safeGone + max(0, left)
+    end
+    for _ = 1, max(0, left) do
+      gone[#gone + 1] = { unit = o.unit, count = o.count, owner = o.owner, expire = expire }
+    end
+  end
+  local taken = (safeGone + 0.5) / (safe + 2)
+
+  -- A seller's new auctions explain his vanished ones as relists, the
+  -- dearest first: what gets undercut and pulled is what no longer sells.
+  table.sort(gone, function(a, b)
+    if a.unit ~= b.unit then return a.unit > b.unit end
+    return a.owner < b.owner
+  end)
+  local sold, bySeller = 0, {}
+  local soldStacks, marginal = 0, 0
+  for _, g in ipairs(gone) do
+    local cancel = CANCEL_BASE
+    if g.owner ~= "" and (relisted[g.owner] or 0) > 0 then
+      cancel = CANCEL_RELISTED
+      relisted[g.owner] = relisted[g.owner] - 1
+    end
+    -- Given that it is gone: was it taken, or did its time run out?
+    local notExpired = 1
+    if g.expire >= 1 then
+      notExpired = 0
+    elseif g.expire > 0 then
+      notExpired = (1 - g.expire) * taken / (g.expire + (1 - g.expire) * taken)
+    end
+    local skipped = g.unit > floorPrice * 1.05 and SKIPPED_FACTOR or 1
+    local p = notExpired * (1 - cancel) * skipped
+    g.p = p
+    sold = sold + p * g.count
+    soldStacks = soldStacks + p
+    if p > 0.5 and g.unit > marginal then marginal = g.unit end
+    if g.owner ~= "" and p > 0 then bySeller[g.owner] = (bySeller[g.owner] or 0) + p * g.count end
+  end
+
+  -- What the scans cannot see: auctions posted and sold inside the gap. If
+  -- a share `hit` of the auctions cheap enough to sell went in this gap,
+  -- and newcomers at those prices go as readily, then for every sale seen
+  -- there were -ln(1 - hit) / hit sales in all.
+  if soldStacks > 0 and marginal > 0 then
+    local atRisk = 0
+    for _, o in pairs(old) do
+      if o.unit <= marginal then atRisk = atRisk + o.n end
+    end
+    local hit = min(0.9, soldStacks / (atRisk + 1))
+    if hit > 0.01 then
+      local scale = -math.log(1 - hit) / hit
+      sold, soldStacks = sold * scale, soldStacks * scale
+    end
+  end
+  -- How much of the whole listing was replaced between the two scans,
+  -- lately. When most of it was, far more changed hands than can be seen
+  -- and the rate is only a floor.
+  local total = 0
+  for _, o in pairs(old) do total = total + o.n end
+  if total > 0 then
+    local turned = #gone / total
+    it.sf = (it.sf or turned) * 0.7 + turned * 0.3
+  end
+
+  -- Belief about the rate: units and days of evidence, older evidence fading.
+  local days = gap / 86400
+  local fade = 0.5 ^ (days / SALES_HALFLIFE)
+  it.sa = (it.sa or 0) * fade + sold               -- units
+  it.sn = (it.sn or 0) * fade + soldStacks         -- auctions: the events that are counted
+  it.sb = (it.sb or 0) * fade + days
+  if next(bySeller) or it.sq then
+    local sq = it.sq or {}
+    for name, units in pairs(sq) do sq[name] = units * fade end
+    for name, units in pairs(bySeller) do sq[name] = (sq[name] or 0) + units end
+    local kept, count = TopPairs(sq, SELLERS_SOLD_KEPT)
+    if count > SELLERS_SOLD_KEPT then
+      sq = {}
+      for i = 1, #kept, 2 do sq[kept[i]] = kept[i + 1] end
+    end
+    it.sq = sq
+  end
+  return sold
+end
+
+-- The selling rate believed from the vanished auctions: units a day, the
+-- range it is in with four chances in five, the days of watching behind it
+-- and the units judged sold in that time. nil until two full scans within
+-- twelve hours of each other have been compared.
+function M.Sales(id)
+  local it = ItemRecord(id, false)
+  if not it or not it.sb or it.sb <= 0 or not M.Source("Sales") then return nil end
+  -- What arrives at random is a sale of one auction, whatever its stack,
+  -- so the belief is about auctions a day; units follow from the average
+  -- stack that sold.
+  local events = it.sn or 0
+  local stack = events > 0.01 and (it.sa or 0) / events or 1
+  local alpha, beta = SALES_PRIOR_UNITS + events, SALES_PRIOR_DAYS + it.sb
+  -- Gamma quantiles by the Wilson-Hilferty cube: good from alpha of 1 up,
+  -- rough below, where the range is wide anyway.
+  local function Quantile(z)
+    local c = 1 - 1 / (9 * alpha) + z / (3 * math.sqrt(alpha))
+    return max(0, alpha * c * c * c / beta) * stack
+  end
+  return { rate = alpha / beta * stack, lo = Quantile(-1.2816), hi = Quantile(1.2816), days = it.sb,
+    units = it.sa or 0, auctions = events, sellers = it.sq,
+    -- Most of what could sell went between scans: more surely sold unseen.
+    floor = (it.sf or 0) > 0.3 }
 end
 
 -- How many sell in a day according to the online data, or nil when it has
@@ -490,7 +753,16 @@ function M.Info(id)
       price = it.l[1], turnover = (it.vn or 0) >= 0.4 and it.v or nil,
     }
     local sold = OnlineSold(id)
-    if sold then info.turnover, info.soldKnown = sold, true end
+    if sold then
+      info.turnover, info.soldKnown = sold, true
+    else
+      -- Sales seen between full scans, once at least an hour has been watched.
+      local seen = M.Sales(id)
+      if seen and seen.days >= 1 / 24 then
+        info.turnover, info.sales = seen.rate, seen
+        info.soldKnown = seen.days >= 0.5
+      end
+    end
     if not info.price then
       -- Nothing listed at the last scan; fall back to the last seen price.
       local h = M.History(it)
@@ -546,7 +818,7 @@ function M.Series(id)
     table.sort(out, function(a, b) return a[1] < b[1] end)
   end
   -- Older days from Auctionator's own history, if it has any.
-  local A = _G.Auctionator
+  local A = M.Source("Auctionator") and _G.Auctionator
   if A and A.Database and A.Database.GetPriceHistory and A.Constants and A.Constants.SCAN_DAY_0 then
     local ok, hist = pcall(A.Database.GetPriceHistory, A.Database, tostring(id))
     if ok and type(hist) == "table" then
@@ -793,6 +1065,7 @@ local function ProcessReplicate()
       local stop = min(pos + 250, #ids)
       for j = pos, stop do
         local id = ids[j]
+        M.TrackSales(id, acc[id] or {}, now)
         M.Record(id, acc[id] or {}, { full = true, t = now, perAuction = true })
       end
       pos = stop + 1
@@ -820,6 +1093,7 @@ local function ProcessReplicate()
     end
     store()
   end
+  local getBand = C_AuctionHouse.GetReplicateItemTimeLeft
   local function step()
     local stop = min(i + 500, n)
     while i < stop do
@@ -831,7 +1105,8 @@ local function ProcessReplicate()
           a = {}
           acc[itemID] = a
         end
-        a[#a + 1] = { buyout / count, count, owner }
+        local band = getBand and getBand(i) or nil
+        a[#a + 1] = { buyout / count, count, owner, type(band) == "number" and band or nil }
       end
       i = i + 1
     end
@@ -1059,6 +1334,16 @@ function M.AutoNext()
   return "items", items
 end
 
+-- Is the standard auction window on one of its buy or sell pages?
+function M.HandTrading()
+  local f, modes = _G.AuctionHouseFrame, _G.AuctionHouseFrameDisplayMode
+  if not f or not modes or not f.IsShown or not f:IsShown() or not f.GetDisplayMode then return false end
+  local ok, mode = pcall(f.GetDisplayMode, f)
+  if not ok or mode == nil then return false end
+  return mode == modes.CommoditiesBuy or mode == modes.ItemBuy
+    or mode == modes.CommoditiesSell or mode == modes.ItemSell
+end
+
 function M.AutoTick()
   if not ns.settings.autoScan or not M.ahOpen then return end
   if M.IsScanning() or M.FullScanBusy() then return end
@@ -1066,9 +1351,14 @@ function M.AutoTick()
   if ns.Jobs and ns.Jobs.Busy and ns.Jobs.Busy() then return end
   local what, wait = M.AutoNext()
   if not what or wait > 0 then return end
+  -- While the player is buying or selling by hand in the auction window,
+  -- item lookups wait: their results would land in the middle of it.
+  if what == "items" and M.HandTrading() then return end
   if what == "full" then
+    -- The item lookups keep their own clock: it moves only when a full
+    -- scan really arrives, so one that gets no answer cannot hold them up.
     ns.Log("auto scan: full")
-    if M.FullScan() then ns.db.lastAutoScan = time() end
+    M.FullScan()
     return
   end
   ns.db.lastAutoScan = time()
@@ -1082,8 +1372,13 @@ end
 -- A full scan the server did not answer (another character used the
 -- allowance, say) is not asked for again straight away.
 ns.Listen("FULLSCAN", function(stage)
-  if stage == "timeout" or stage == "empty" then M.autoHold = time() + 5 * 60 end
+  if stage == "timeout" or stage == "empty" then
+    -- Wait longer after each miss: 5, 10, 20, then 30 minutes.
+    M.autoMisses = (M.autoMisses or 0) + 1
+    M.autoHold = time() + min(30, 5 * 2 ^ (M.autoMisses - 1)) * 60
+  end
   if stage == "done" then
+    M.autoMisses = 0
     ns.db.lastAutoScan = time()
     M.sessionFullScans = (M.sessionFullScans or 0) + 1
   end

@@ -128,6 +128,9 @@ local DEFAULTS = {
   cut = 0.05,         -- auction house cut on a sale
   horizonDays = 2,    -- how long a batch may take to sell
   chartDays = 14,     -- how far back the price chart looks; 0 = everything
+  srcOnline = true,   -- use Blizzard's hourly data when the sync tool has brought it in
+  srcAuctionator = true, -- use Auctionator's prices and history where we have none
+  srcSales = true,    -- use sales worked out from auctions that vanish between full scans
   autoScan = true,    -- scan by itself while the auction house is open
   autoMinutes = 10,   -- how often the items you care about are looked up again
 }
@@ -320,6 +323,10 @@ SlashCmdList["CRAFTGRAPH"] = function(msg)
   end
   if msg == "sell" then
     if ns.UI and ns.UI.OpenSell then ns.Safe(ns.UI.OpenSell) end
+    return
+  end
+  if msg == "sources" or msg == "data" then
+    if ns.UI and ns.UI.ToggleSources then ns.Safe(ns.UI.ToggleSources) end
     return
   end
   if msg == "auto" then

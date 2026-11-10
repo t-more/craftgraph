@@ -1188,7 +1188,10 @@ local function Refresh(id, what)
 end
 
 -- Buys `qty` of an item at auction, at no more than the plan expected.
-function J.BuyAuction(id, qty)
+-- limit: the most the whole amount may cost (what the offer on screen
+-- counted on). Without it the only guard is the usual small slack over the
+-- listings as they stand.
+function J.BuyAuction(id, qty, limit)
   local A = C_AuctionHouse
   local name = ns.ItemName(id)
   if not M.ahOpen then
@@ -1225,6 +1228,11 @@ function J.BuyAuction(id, qty)
   local cost, got = M.Walk(info.ladder, 0, qty)
   if got <= 0 then
     ns.Print("no " .. name .. " is listed right now.")
+    return false
+  end
+  if limit and cost > limit * (got / qty) * 1.02 + 1 then
+    ns.Print("the listings have moved: " .. got .. " x " .. name .. " now cost " .. ns.Money(cost)
+      .. ", more than the " .. ns.Money(limit * (got / qty)) .. " this offer counted on. Not bought.")
     return false
   end
   if got < qty then qty = got end
@@ -1846,7 +1854,8 @@ function J.BestMoment(id, priceNow)
   local label = "now"
   if bestH > 0 then
     local at = time() + bestH * 3600
-    label = (bestH < 20 and "today " or (date("%a", at) .. " ")) .. date("%H", at) .. ":00"
+    local sameDay = date("%j", at) == date("%j", time())
+    label = (sameDay and "today " or (date("%a", at) .. " ")) .. date("%H", at) .. ":00"
   end
   return { days = bestH / 24, hours = bestH, price = price, lo = price * exp(-bestSd), hi = price * exp(bestSd),
     sd = bestSd, sd0 = sd0, label = label, gain = price / base - 1 }
@@ -1895,7 +1904,15 @@ function J.Projection(id, qty, goal)
       local rest = qty - held
       local restCost = 0
       if rest > 0 then
-        restCost = ladder and ladder[1] and M.Walk(ladder, 0, rest) or (planned and planned * rest) or nil
+        if ladder and ladder[1] then
+          -- Fewer listed than the plan wants: the rest is counted at the
+          -- dearest listed price, and the projection says it is short.
+          local cost, got, last = M.Walk(ladder, 0, rest)
+          restCost = cost + (rest - got) * (last or 0)
+          if got < rest then out.short = rest - got end
+        else
+          restCost = planned and planned * rest or nil
+        end
       end
       if restCost then cost = (planned or (ladder and ladder[1]) or 0) * held + restCost end
       if kind == "tovendor" then

@@ -15,4 +15,5 @@ How we keep them:
    GitHub release tagged `v<version>`; that tag is what the update check reads.
 
 Released versions:
+- [0.2](0.2.md)
 - [0.1](0.1.md)

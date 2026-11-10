@@ -50,7 +50,7 @@ what it saw and tells you why. One switch shows the guess anyway.
 
 ## Install
 
-1. Download `CraftGraph-0.1.zip` from the [latest release](https://github.com/t-more/craftgraph/releases/latest) and unzip it.
+1. Download the `CraftGraph` zip from the [latest release](https://github.com/t-more/craftgraph/releases/latest) and unzip it.
 2. Windows: double-click **Install CraftGraph**. Anything else: copy the `CraftGraph` folder into
    `World of Warcraft/_forever_/Interface/AddOns/`.
 3. Start the game, open the auction house, type `/cg` and press **Full scan**.

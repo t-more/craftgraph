@@ -122,7 +122,7 @@ local pin = { track = {} }
 for _, set in ipairs({ { 1234567, 1199900, 1250000, 1180000 }, { -52345, 81234, -99999, 123456 }, { 95, 80, 99, 70 } }) do
   pin.track = {}
   for i, v in ipairs(set) do pin.track[#pin.track + 1] = i * 300 pin.track[#pin.track + 1] = v end
-  fit("plan window profit line", ns.UI.GoalText(pin), 350 - 12 - 38 - 4)
+  fit("plan window profit line", ns.UI.GoalText(pin), 370 - 12 - 38 - 4)
 end
 ns.settings.autoScan = true
 for _, st in ipairs({ { false }, { true, 0 }, { true, 600 } }) do

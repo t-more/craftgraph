@@ -1,4 +1,4 @@
-CraftGraph 0.1 - for World of Warcraft Forever (interface 16001)
+CraftGraph 0.2 - for World of Warcraft Forever (interface 16001)
 
 What it does
   Shows every way to make money right now, with the amount worth doing, what it

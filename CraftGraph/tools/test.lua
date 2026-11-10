@@ -2011,7 +2011,7 @@ do
   ns.UI.ShowTrends(true) RunTimers()
   local view
   for _, f in ipairs(frames) do if f.options and f.facts then view = f end end
-  check(view.facts.text:find("Sells about", 1, true) ~= nil, "Trends says how fast it sells: " .. view.facts.text)
+  check(view.facts.text:find("Sells:", 1, true) ~= nil and view.facts.text:find("a day", 1, true) ~= nil, "Trends says how fast it sells: " .. view.facts.text)
   ns.UI.ShowTrends(false)
   ns.realm.items[id], ns.realm.items[quiet] = nil, nil
 end
@@ -2151,11 +2151,34 @@ do
         local text = ns.UI.EdgeProfit({ from = paying })
         check(text and text:find("/craft", 1, true) and text:find("+", 1, true) and one.profit > 0, "a paying craft's line shows its profit per craft: " .. tostring(text))
         check(ns.UI.EdgeProfit({ from = 2770 }) == nil, "a raw material has none")
-        local shown = 0
-        for _, label in ipairs(gv.labels) do
-          if label.shown and label.text:find("/craft", 1, true) then shown = shown + 1 end
+        local function count()
+          local onLines, onCards, compactCards = 0, 0, 0
+          for _, label in ipairs(gv.labels) do
+            if label.shown and label.text:find("/craft", 1, true) then onLines = onLines + 1 end
+          end
+          for _, fr in ipairs(frames) do
+            if fr.node and fr.shown and fr.bigLine and fr.compact then
+              compactCards = compactCards + 1
+              if fr.bigLine.text:find("/craft", 1, true) then onCards = onCards + 1 end
+            end
+          end
+          return onLines, onCards, compactCards
         end
-        check(shown >= 1, "it is written on the graph (" .. shown .. " labels)")
+        -- Zoom all the way in: full cards, profit on the lines.
+        for _ = 1, 12 do gv.scripts.OnMouseWheel(gv, 1) end
+        local onLines, onCards, compactCards = count()
+        check(gv.scale >= V.DENSE_BELOW and onLines >= 1 and compactCards == 0, "zoomed in, it is written on the lines (" .. onLines .. ") and cards are full")
+        -- Zoom out: cards show the name and one line with the profit; lines only the amount.
+        for _ = 1, 12 do gv.scripts.OnMouseWheel(gv, -1) end
+        onLines, onCards, compactCards = count()
+        check(gv.scale < V.DENSE_BELOW and compactCards >= 2 and onCards >= 1 and onLines == 0,
+          "zoomed out, cards show less and carry the profit themselves (" .. compactCards .. " cards, " .. onCards .. " with profit)")
+        local bare = true
+        for _, label in ipairs(gv.labels) do
+          if label.shown and label.text ~= "" and not label.text:match("^x[%d%.]+$") then bare = false end
+        end
+        check(bare, "and the lines carry only the amount")
+        for _ = 1, 4 do gv.scripts.OnMouseWheel(gv, 1) end
       end
       -- Lines towards the biggest earner on screen are the thickest.
       do

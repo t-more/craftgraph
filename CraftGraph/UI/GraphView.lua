@@ -168,6 +168,22 @@ local function CreateNode(canvas)
   b.name:SetJustifyH("LEFT")
   b.name:SetWordWrap(false)
   ns.Watch(b.name, "graph item name")
+  -- The card when the graph is zoomed out: a larger name and one line,
+  -- which can still be read; the rest is in the tooltip and one zoom away.
+  b.bigName = b:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  b.bigName:SetPoint("TOPLEFT", b, "TOPLEFT", 56, -8)
+  b.bigName:SetPoint("TOPRIGHT", b, "TOPRIGHT", -7, -8)
+  b.bigName:SetJustifyH("LEFT")
+  b.bigName:SetJustifyV("TOP")
+  b.bigName:SetWordWrap(true)
+  b.bigName:SetMaxLines(2)
+  b.bigName:Hide()
+  b.bigLine = b:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  b.bigLine:SetPoint("BOTTOMLEFT", b, "BOTTOMLEFT", 56, 9)
+  b.bigLine:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -7, 9)
+  b.bigLine:SetJustifyH("LEFT")
+  b.bigLine:SetWordWrap(false)
+  b.bigLine:Hide()
 
   -- Three lines: auction, vendor, make. Each can carry its own button at
   -- the right end: buy or sell at auction, buy from a vendor, craft.
@@ -344,6 +360,44 @@ local function FillNode(b, node, isCenter)
   end
 end
 
+-- Below this zoom the cards show less, larger.
+V.DENSE_BELOW = 0.75
+
+-- Switches a filled card between its full form and the zoomed-out one:
+-- the name and one line (price, and what a craft of it earns).
+local function Dense(b, compact)
+  local node = b.node
+  compact = compact and node and not node.more
+  b.bigName:SetShown(compact and true or false)
+  b.bigLine:SetShown(compact and true or false)
+  b.compact = compact and true or false
+  if not compact then
+    b.name:Show()
+    b.line1:Show()
+    b.line2:Show()
+    b.line3:Show()
+    b.stock:Show()
+    return
+  end
+  local id = node.id
+  local r, g, bl = ns.ItemColor(id)
+  b.bigName:SetText(ns.ItemName(id))
+  b.bigName:SetTextColor(r, g, bl)
+  local info = ns.Market.Info(id)
+  local text = (info and info.price) and ns.Money(info.price) or (GREY .. (info and "none listed" or "no price") .. "|r")
+  local earn = ns.UI.EdgeProfit and ns.UI.EdgeProfit({ from = id })
+  if earn then text = text .. "   " .. earn end
+  b.bigLine:SetText(text)
+  b.name:Hide()
+  b.line1:Hide()
+  b.line2:Hide()
+  b.line3:Hide()
+  b.stock:Hide()
+  b.less:Hide()
+  b.more:Hide()
+  for _, step in ipairs(b.steps) do step:Hide() end
+end
+
 -- What making the item a line leads to earns in all, at the quantity that
 -- earns most: 0 when it does not pay or cannot be told.
 function V.EdgeGain(e)
@@ -446,6 +500,10 @@ function V.Create(parent)
     self.scale = max(0.4, min(1.6, s))
     canvas:SetScale(self.scale)
     Place()
+    -- Crossing the zoom at which cards show more or less: fill them again.
+    if self.graph and (self.scale < V.DENSE_BELOW) ~= (self.compact and true or false) then
+      V.SetGraph(self, self.graph, false)
+    end
   end)
 
   view.SetGraph = V.SetGraph
@@ -466,6 +524,10 @@ end
 function V.SetGraph(view, graph, refit)
   local canvas = view.canvas
   local nNode, nLine, nLabel = 0, 0, 0
+  view.graph = graph
+  -- Zoomed out, cards and line labels carry less, so that they can be read.
+  local compact = view.scale < V.DENSE_BELOW
+  view.compact = compact
   view.empty:SetShown(graph == nil)
   view.flows = {}
 
@@ -537,6 +599,11 @@ function V.SetGraph(view, graph, refit)
         -- "used in" side it follows the amount; on the "made from" side it
         -- sits once at the product's end, where its materials' lines meet.
         local earn = ns.UI.EdgeProfit and ns.UI.EdgeProfit(e) or nil
+        if compact then
+          -- Just the amount: the card itself says what a craft earns.
+          text = text and text:match("^(x[%d%.]+)") or text
+          earn = nil
+        end
         if earn and e.left and text then
           text = text .. " " .. earn
         elseif earn and not e.left and not earned[e.from] then
@@ -585,6 +652,7 @@ function V.SetGraph(view, graph, refit)
         view.nodes[nNode] = b
       end
       FillNode(b, node, node.id == graph.center)
+      Dense(b, compact)
       b:ClearAllPoints()
       b:SetPoint("CENTER", canvas, "CENTER", node.x, node.y)
       b:Show()
@@ -606,6 +674,11 @@ function V.SetGraph(view, graph, refit)
       view.oy = -(minY + maxY) / 2 * scale
       canvas:SetScale(scale)
       view.Place()
+      -- The zoom is known only now: draw once more if it changes how much
+      -- the cards show.
+      if (scale < V.DENSE_BELOW) ~= compact then
+        return V.SetGraph(view, graph, false)
+      end
     end
   end
 

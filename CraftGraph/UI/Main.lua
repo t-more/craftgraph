@@ -138,18 +138,6 @@ local function CreatePanel(parent)
     y = y - 10
   end
 
-  Row("auction", "Auction price")
-  Row("supply", "Supply and demand")
-  Row("vendor", "Vendor")
-  -- Click the supply and demand line to list this item's sales seen.
-  local salesHit = CreateFrame("Button", nil, p)
-  salesHit:SetPoint("TOPLEFT", p, "TOPLEFT", 12, rowY.supply + 2)
-  salesHit:SetPoint("BOTTOMRIGHT", p, "TOPRIGHT", -12, rowY.supply - 15)
-  salesHit:SetScript("OnClick", function() ns.Safe(UI.ShowSales, true) end)
-  Tip(salesHit, "Sales seen", "Click to list the auctions of this item that were judged sold between full scans.")
-  p.salesHit = salesHit
-  Divider()
-
   p.makeHeader = Text(p, "GameFontNormal")
   p.makeHeader:SetPoint("TOPLEFT", 14, y)
   p.pin = Button(p, "Plan it", 104)
@@ -174,9 +162,10 @@ local function CreatePanel(parent)
     "Crafts this with the materials in your bags. Your profession window must be open: "
     .. "the first press opens it.")
   y = y - 20
+  -- The answer first: what making it earns. Then what that rests on.
+  Row("profit", "Profit", "GameFontHighlightLarge", 24)
   Row("cost", "Materials")
   Row("sale", "Sale")
-  Row("profit", "Profit", "GameFontHighlightLarge", 24)
   Row("best", "Best amount", nil, nil, 62)
   Row("time", "Time to sell")
 
@@ -200,6 +189,20 @@ local function CreatePanel(parent)
   p.warn:SetMaxLines(2)
   y = y - 28
   Divider()
+
+  -- The market facts the answer is built on.
+  Row("auction", "Auction price")
+  Row("supply", "Supply and demand")
+  Row("vendor", "Vendor")
+  -- Click the supply and demand line to list this item's sales seen.
+  local salesHit = CreateFrame("Button", nil, p)
+  salesHit:SetPoint("TOPLEFT", p, "TOPLEFT", 12, rowY.supply + 2)
+  salesHit:SetPoint("BOTTOMRIGHT", p, "TOPRIGHT", -12, rowY.supply - 15)
+  salesHit:SetScript("OnClick", function() ns.Safe(UI.ShowSales, true) end)
+  Tip(salesHit, "Sales seen", "Click to list the auctions of this item that were judged sold between full scans.")
+  p.salesHit = salesHit
+  Divider()
+
 
   -- One box, two pictures: the price over time, or the price by time of week.
   local chartHeader = Button(p, "Price history", 104)
@@ -677,6 +680,7 @@ end
 -- and how many steps it takes.
 ------------------------------------------------------------------------------
 local WORTH_ROWS = 23
+local CoarseMoney
 local worth, worthButton
 local worthSort = "safe"
 local worthFilter = "all"
@@ -724,6 +728,15 @@ function UI.SellSignalLines(id)
       .. ns.Round(best.gain * 100) .. "% more.", 0.45, 0.75, 1 }
   end
   return lines
+end
+
+-- An amount rounded to its largest coin, for a margin beside a figure:
+-- 6g 31s 4c of doubt reads as 6g.
+function CoarseMoney(copper)
+  copper = math.abs(copper)
+  if copper >= 10000 then return ns.Round(copper / 10000) * 10000 end
+  if copper >= 100 then return ns.Round(copper / 100) * 100 end
+  return ns.Round(copper)
 end
 
 -- A profit or loss in colour, with its sign.
@@ -1089,7 +1102,7 @@ function UI.UpdateWorth()
     worth.summary:SetText("When to sell what you have or can make: |cffffffff" .. #list .. "|r")
   else
     worth.summary:SetText("Ways to make money now: |cffffffff" .. #list .. "|r"
-      .. GREY .. "  (" .. sure .. " look certain)|r")
+      .. GREY .. "  (" .. sure .. " look sure)|r")
   end
   local note
   if worthFilter == "item" then
@@ -1144,7 +1157,7 @@ function UI.UpdateWorth()
       row.outlay:SetText(d.kind == "later" and "" or (d.outlay > 0 and ns.Money(d.outlay) or (GREY .. "nothing|r")))
       row.profit:SetText((d.kind == "later" and d.when.hours == 0) and (GREY .. "sell now|r")
         or "|cff40ff40+" .. ns.Money(d.profit) .. "|r"
-        .. (d.sd > 0 and (GREY .. " \194\177" .. min(999, ns.Round(100 * d.sd / max(d.profit, 1))) .. "%|r") or ""))
+        .. (d.sd > 0 and (GREY .. " \194\177|r" .. ns.Money(CoarseMoney(d.sd))) or ""))
       row.effort:SetText(d.effort)
       row.signal:SetText(UI.SellSignalText(d))
       local text, enabled, fn, tip = DealAction(d)
@@ -1993,36 +2006,37 @@ function UI.UpdateTrends()
   -- Facts in words.
   local it = ns.Market.Get(id)
   local t = ns.Stats.Trend(id)
+  -- The facts, as up to four short labelled lines: what it costs now,
+  -- where it is heading, how fast it sells, and when it is cheap and dear.
   local facts = {}
   if not t then
-    facts[#facts + 1] = "No price has been recorded for this yet. Scan it at the auction house."
+    facts.none = "No price has been recorded for this yet. Scan it at the auction house."
   else
-    -- What the last scan actually saw comes first; the estimates follow.
+    -- What the last scan actually saw comes first; the estimate follows.
     local info = ns.Market.Info(id)
+    local now = ""
     if info and info.source == "scan" and info.age then
-      facts[#facts + 1] = (info.price and ("Cheapest listed " .. ns.Money(info.price) .. " (" .. (info.total or 0) .. " on sale)")
-        or "None on sale") .. ", " .. UI.ScanAgeText(id) .. "."
+      now = (info.price and ("Cheapest listed " .. ns.Money(info.price) .. " (" .. (info.total or 0) .. " on sale)")
+        or "None on sale") .. ", " .. UI.ScanAgeText(id) .. ". "
     end
-    local line = "Estimate now about " .. ns.Money(t.now)
+    now = now .. "Estimate " .. ns.Money(t.now)
     if t.vsUsual then
-      line = line .. ", " .. Percent(t.vsUsual) .. " of " .. ns.Money(t.usual) .. " (last 14 days)"
+      now = now .. ", " .. Percent(t.vsUsual) .. " of " .. ns.Money(t.usual)
     end
-    facts[#facts + 1] = line .. "."
-    if t.perDay then
-      local p = ns.Round(math.abs(t.perDay) * 100)
-      facts[#facts + 1] = (p == 0 and "Steady over the last week"
-        or ((t.perDay > 0 and "Rising" or "Falling") .. " about " .. p .. "% a day over the last week"))
-        .. " (" .. t.trendScans .. " scans). It typically moves about \194\177" .. ns.Round(t.swing * 100) .. "% a day."
-    else
-      facts[#facts + 1] = "Too few scans over the last week to call a direction yet (" .. t.scans
-        .. " in all). A direction needs four scans over at least a day."
-    end
-  end
-
-  -- Say so when this price cannot be forecast yet.
-  do
+    facts.now = now .. "."
     local _, _, _, why = ns.Stats.Show(id)
-    if why and t then facts[#facts + 1] = "|cffff8c33" .. why .. "|r" end
+    if why then
+      -- Say so when this price cannot be forecast yet.
+      facts.trend = "|cffff8c33" .. why .. "|r"
+    elseif t.perDay then
+      local p = ns.Round(math.abs(t.perDay) * 100)
+      facts.trend = (p == 0 and "Steady over the last week"
+        or ((t.perDay > 0 and "Rising" or "Falling") .. " about " .. p .. "% a day over the last week"))
+        .. ", typically moving \194\177" .. ns.Round(t.swing * 100) .. "% a day."
+    else
+      facts.trend = "Too few scans over the last week to call a direction (" .. t.scans
+        .. " so far); it needs four over at least a day."
+    end
   end
 
   -- How fast it sells, from the auctions that vanished between full scans.
@@ -2032,11 +2046,11 @@ function UI.UpdateTrends()
       local function N(x) return x >= 10 and ns.Round(x) or string.format("%.1f", x) end
       local watched = sales.days >= 1 and (N(sales.days) .. " days") or (ns.Round(sales.days * 24 * 10) / 10 .. " h")
       if sales.floor then
-        facts[#facts + 1] = "Sells at least " .. N(sales.lo) .. " a day: most of what was cheap enough went between "
-          .. "full scans, so more sold unseen (" .. watched .. " watched). Scan more often for a real figure."
+        facts.sells = "at least " .. N(sales.lo) .. " a day: most of the cheap ones went between full scans ("
+          .. watched .. " watched). Scan more often for a real figure."
       else
-        facts[#facts + 1] = "Sells about " .. N(sales.rate) .. " a day (" .. N(sales.lo) .. " to " .. N(sales.hi)
-          .. "), judged from " .. N(sales.units) .. " sold over " .. watched .. " between full scans."
+        facts.sells = "about " .. N(sales.rate) .. " a day (" .. N(sales.lo) .. " to " .. N(sales.hi)
+          .. "), from " .. N(sales.units) .. " judged sold over " .. watched .. " of full scans."
       end
     end
   end
@@ -2253,21 +2267,26 @@ function UI.UpdateTrends()
     if weekMode then
       if priceMode and cheapest and dearest and cheapest ~= dearest then
         local function name(index) return DAY_LONG[DAY_ORDER[floor(index / 24) + 1]] .. " around " .. HourText(index % 24) end
-        facts[#facts + 1] = "Over the week it looks cheapest on " .. name(cheapest) .. " (about "
-          .. ns.Money(pattern.slots[cheapest].est.price) .. ") and dearest on " .. name(dearest) .. " (about "
+        facts.when = "cheapest " .. name(cheapest) .. " (about "
+          .. ns.Money(pattern.slots[cheapest].est.price) .. "), dearest " .. name(dearest) .. " (about "
           .. ns.Money(pattern.slots[dearest].est.price) .. ")."
       end
     elseif priceMode and pattern.filled >= 2 and cheapest ~= dearest then
       local function name(key) return trendPeriod == "hour" and ("around " .. HourText(key)) or ("on " .. DAY_LONG[key] .. "s") end
-      facts[#facts + 1] = "So far cheapest " .. name(cheapest) .. " (" .. Percent(pattern.slots[cheapest].price)
-        .. ") and dearest " .. name(dearest) .. " (" .. Percent(pattern.slots[dearest].price) .. ")."
+      facts.when = "so far cheapest " .. name(cheapest) .. " (" .. Percent(pattern.slots[cheapest].price)
+        .. "), dearest " .. name(dearest) .. " (" .. Percent(pattern.slots[dearest].price) .. ")."
     elseif pattern.filled < 2 then
-      facts[#facts + 1] = "Scans so far cover " .. pattern.filled .. " of " .. slots .. " " .. unit
+      facts.when = "scans so far cover " .. pattern.filled .. " of " .. slots .. " " .. unit
         .. ", too few to compare times. Scan at other times to fill it in."
     end
   end
   f.optionNote:SetText(priceMode and "green = cheaper than usual, orange = dearer" or "average units listed")
-  f.facts:SetText(table.concat(facts, " "))
+  local lines = {}
+  if facts.none then lines[#lines + 1] = facts.none end
+  for _, part in ipairs({ { "now", "Now" }, { "trend", "Trend" }, { "sells", "Sells" }, { "when", "When" } }) do
+    if facts[part[1]] then lines[#lines + 1] = GOLD .. part[2] .. ":|r " .. facts[part[1]] end
+  end
+  f.facts:SetText(table.concat(lines, "\n"))
 
   -- Stack sizes.
   local stacks = it and it.bs

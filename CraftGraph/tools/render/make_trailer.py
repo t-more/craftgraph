@@ -1,262 +1,536 @@
 #!/usr/bin/env python3
-"""A tongue-in-cheek trailer for CraftGraph, in the manner of an overblown
-film preview: title cards, a deep voice, drums.
+"""A short parody trailer for CraftGraph: an overblown film preview in under
+half a minute.
 
     python3 tools/render/make_trailer.py <frames folder from scenes.lua> <real-graph.svg> <output.mp4>
 
-Everything is made here: the pictures come from the addon's own interface
-(scenes.lua and real.lua), the voice from espeak-ng, the drums and drones
-from ffmpeg's tone generators. Needs ffmpeg, rsvg-convert and espeak-ng.
+Everything is made here. The pictures are the addon's own interface (from
+scenes.lua and real.lua), animated frame by frame with Pillow. The music is
+composed and synthesised with numpy: drums, a string ostinato, braams, a
+riser. The only voice is the addon's own, from espeak-ng, used once.
+Needs ffmpeg, rsvg-convert, espeak-ng, and Python with numpy, scipy, Pillow.
 """
-import html
+import math
+import random
 import subprocess
 import sys
 import tempfile
+import wave
 from pathlib import Path
 
-W, H, FPS = 1280, 720, 24
-GOLD, WHITE, GREY, RED, GREEN = "#ffd100", "#f2ead8", "#9d9484", "#ff5040", "#40ff40"
+import numpy as np
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+from scipy import signal
+
+W, H, FPS = 1280, 720, 30
+BAR = 62                                   # wide-screen bars
+BEAT = 0.5                                 # 120 beats a minute; every cut sits on a beat
+HEAVY = "/usr/share/fonts/TTF/FiraSansCompressed-Heavy.ttf"
+ITALIC = "/usr/share/fonts/TTF/FiraSansCondensed-LightItalic.ttf"
+MEDIUM = "/usr/share/fonts/TTF/FiraSansCondensed-Medium.ttf"
+WHITE, GREY, RED, GREEN = (245, 238, 222), (150, 142, 128), (255, 70, 55), (80, 255, 90)
+rng = random.Random(7)
 
 
-def run(*cmd):
-    done = subprocess.run([str(c) for c in cmd], capture_output=True, text=True)
+def run(*cmd, **kw):
+    done = subprocess.run([str(c) for c in cmd], capture_output=True, **kw)
     if done.returncode != 0:
-        sys.exit("failed: %s\n%s" % (" ".join(str(c) for c in cmd[:6]), done.stderr[-1500:]))
+        sys.exit("failed: %s\n%s" % (" ".join(str(c) for c in cmd[:5]), done.stderr.decode()[-1200:]))
     return done.stdout
 
 
-def length(path):
-    return float(run("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path))
+# ----------------------------------------------------------------------------
+# Pictures
+# ----------------------------------------------------------------------------
+def ease(x):
+    x = max(0.0, min(1.0, x))
+    return 1 - (1 - x) ** 3
 
 
-def card(path, lines, background="#000000", band=None):
-    """A title card. lines: (text, size, colour[, spacing])."""
-    total = sum(size * 1.45 for _, size, *_ in lines)
-    y = (H - total) / 2
-    parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">' % (W, H),
-             '<rect width="100%%" height="100%%" fill="%s"/>' % background]
-    if band:
-        parts.append('<rect x="60" y="60" width="%d" height="%d" fill="none" stroke="%s" stroke-width="3"/>'
-                     % (W - 120, H - 120, band))
-    for text, size, colour, *rest in lines:
-        spacing = rest[0] if rest else 6
-        y += size * 1.1
-        parts.append('<text x="%d" y="%.0f" text-anchor="middle" font-family="DejaVu Serif, serif" font-weight="bold" '
-                     'font-size="%d" letter-spacing="%d" fill="%s">%s</text>'
-                     % (W / 2, y, size, spacing, colour, html.escape(text)))
-        y += size * 0.35
-    parts.append("</svg>")
-    svg = Path(str(path) + ".svg")
-    svg.write_text("\n".join(parts))
-    run("rsvg-convert", svg, "-o", path)
+def text_layer(text, size, colour=WHITE, tracking=0.06, font=HEAVY, glow=True, outline=0, plate=False, fit=0.88):
+    """A line of text as its own picture, with a soft glow behind it.
+    colour "gold" fills it with a gold gradient. It is made smaller until it
+    fits `fit` of the screen's width. plate: a dark band behind it, for
+    text that sits on a busy picture."""
+    while True:
+        f = ImageFont.truetype(font, int(size))
+        gap = size * tracking
+        widths = [f.getlength(ch) for ch in text]
+        width = int(sum(widths) + gap * (len(text) - 1))
+        if width <= W * fit or size < 20:
+            break
+        size *= 0.96
+    size = int(size)
+    pad = int(size * 0.6)
+    mask = Image.new("L", (width + 2 * pad, int(size * 1.35) + 2 * pad), 0)
+    draw = ImageDraw.Draw(mask)
+    x = pad
+    for ch, w in zip(text, widths):
+        draw.text((x, pad), ch, font=f, fill=255)
+        x += w + gap
+    if colour == "gold":
+        ramp = Image.new("RGB", (1, mask.height))
+        for y in range(mask.height):
+            k = (y - pad) / (size * 1.2)
+            k = max(0.0, min(1.0, k))
+            top, mid, low = (255, 246, 190), (255, 209, 0), (178, 108, 0)
+            a, b, t = (top, mid, k * 2) if k < 0.5 else (mid, low, k * 2 - 1)
+            ramp.putpixel((0, y), tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3)))
+        fill = ramp.resize(mask.size)
+        tint = (255, 190, 40)
+    else:
+        fill = Image.new("RGB", mask.size, colour)
+        tint = colour
+    layer = Image.new("RGBA", mask.size, (0, 0, 0, 0))
+    if plate:
+        band = Image.new("L", mask.size, 0)
+        ImageDraw.Draw(band).rounded_rectangle((pad * 0.35, pad * 0.75, mask.width - pad * 0.35, mask.height - pad * 0.7),
+                                                 radius=size * 0.3, fill=190)
+        layer.paste(Image.new("RGBA", mask.size, (0, 0, 0, 255)), (0, 0), band.filter(ImageFilter.GaussianBlur(size * 0.18)))
+    if outline:
+        edge = mask.filter(ImageFilter.MaxFilter(outline * 2 + 1)).filter(ImageFilter.GaussianBlur(1.2))
+        layer.paste(Image.new("RGBA", mask.size, (0, 0, 0, 255)), (0, 0), edge)
+    if glow:
+        halo = mask.filter(ImageFilter.GaussianBlur(size * 0.16)).point(lambda v: int(v * 0.55))
+        layer = Image.alpha_composite(layer, Image.merge("RGBA", (*Image.new("RGB", mask.size, tint).split(), halo)))
+    layer.paste(fill, (0, 0), mask)
+    layer.info["mask"] = mask
+    return layer
 
 
-def still_clip(out, image, seconds, crop=None, zoom=(1.0, 1.08), caption=None, colour=WHITE):
-    """A picture with a slow push in, wide-screen bars and a caption."""
-    frames = int(seconds * FPS)
-    chain = []
-    if crop:
-        x, y, w, h = crop                      # given as left, top, width, height
-        chain.append("crop=%d:%d:%d:%d" % (w, h, x, y))
-    chain.append("scale=%d:%d:force_original_aspect_ratio=decrease:flags=lanczos" % (W * 2, H * 2))
-    chain.append("pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black" % (W * 2, H * 2))
-    z0, z1 = zoom
-    chain.append("zoompan=z='%f+(%f)*on/%d':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=%d:s=%dx%d:fps=%d"
-                 % (z0, z1 - z0, frames, frames, W, H, FPS))
-    chain.append("drawbox=0:0:%d:54:black:fill" % W)
-    chain.append("drawbox=0:%d:%d:54:black:fill" % (H - 54, W))
-    inputs = ["-loop", "1", "-i", image]
-    graph = ",".join(chain)
-    if caption:
-        cap = Path(str(out) + ".cap.png")
-        caption_png(cap, caption, colour)
-        inputs += ["-loop", "1", "-i", cap]
-        graph = "[0:v]%s[v];[v][1:v]overlay=0:0" % graph
-    run("ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", graph, "-t", "%.3f" % seconds,
-        "-r", FPS, "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "20", out)
+def place(frame, layer, cx, cy, scale=1.0, alpha=1.0):
+    if scale != 1.0:
+        layer = layer.resize((max(1, int(layer.width * scale)), max(1, int(layer.height * scale))), Image.BILINEAR)
+    if alpha < 1.0:
+        layer = layer.copy()
+        layer.putalpha(layer.getchannel("A").point(lambda v: int(v * alpha)))
+    frame.alpha_composite(layer, (int(cx - layer.width / 2), int(cy - layer.height / 2)))
 
 
-def caption_png(path, text, colour):
-    lines = text.split("\n")
-    parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">' % (W, H)]
-    y = H - 54 - 26 - (len(lines) - 1) * 44
-    for line in lines:
-        for dx, dy, fill in ((3, 3, "#000000"), (0, 0, colour)):
-            parts.append('<text x="%d" y="%d" text-anchor="middle" font-family="DejaVu Serif, serif" font-weight="bold" '
-                         'font-size="36" letter-spacing="3" fill="%s" stroke="#000" stroke-width="%d" paint-order="stroke">%s</text>'
-                         % (W / 2 + dx, y + dy, fill, 6 if fill == "#000000" else 0, html.escape(line)))
-        y += 44
-    parts.append("</svg>")
-    svg = Path(str(path) + ".svg")
-    svg.write_text("\n".join(parts))
-    run("rsvg-convert", svg, "-o", path)
+def camera(image, start, end, k):
+    """A view of a picture that moves from one rectangle to another."""
+    x, y, w, h = (start[i] + (end[i] - start[i]) * k for i in range(4))
+    return image.resize((W, H), Image.BILINEAR, box=(x, y, x + w, y + h)).convert("RGBA")
 
 
-def sequence_clip(out, pattern, rate, seconds, caption=None, colour=WHITE):
-    """Frames played fast, like a montage."""
-    chain = ("scale=%d:%d:force_original_aspect_ratio=decrease:flags=lanczos,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black,"
-             "drawbox=0:0:%d:54:black:fill,drawbox=0:%d:%d:54:black:fill" % (W, H, W, H, W, H - 54, W))
-    inputs = ["-framerate", rate, "-i", pattern]
-    graph = chain
-    if caption:
-        cap = Path(str(out) + ".cap.png")
-        caption_png(cap, caption, colour)
-        inputs += ["-loop", "1", "-i", cap]
-        graph = "[0:v]%s[v];[v][1:v]overlay=0:0" % chain
-    run("ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", graph, "-t", "%.3f" % seconds,
-        "-r", FPS, "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "20", out)
+VIGNETTE = None
 
 
-def voice(path, text, speed=118, pitch=18, deep=0.80):
-    """The voice of every film preview, as well as a speech synthesiser can."""
+def finish(frame, flash=0.0, shake=(0, 0), dim=1.0):
+    """Shake, vignette, bars, flash."""
+    global VIGNETTE
+    if VIGNETTE is None:
+        yy, xx = np.mgrid[0:H, 0:W]
+        d = np.sqrt(((xx - W / 2) / (W / 2)) ** 2 + ((yy - H / 2) / (H / 2)) ** 2)
+        a = np.clip((d - 0.55) / 0.75, 0, 1) ** 1.6 * 200
+        VIGNETTE = Image.merge("RGBA", (*Image.new("RGB", (W, H), 0).split(), Image.fromarray(a.astype("uint8"))))
+    if shake != (0, 0):
+        frame = ImageChops.offset(frame, int(shake[0]), int(shake[1]))
+    frame = Image.alpha_composite(frame, VIGNETTE)
+    draw = ImageDraw.Draw(frame)
+    draw.rectangle((0, 0, W, BAR), fill=(0, 0, 0, 255))
+    draw.rectangle((0, H - BAR, W, H), fill=(0, 0, 0, 255))
+    out = frame.convert("RGB")
+    if dim < 1.0:
+        out = Image.blend(Image.new("RGB", (W, H), 0), out, dim)
+    if flash > 0.01:
+        out = Image.blend(out, Image.new("RGB", (W, H), (255, 244, 214)), min(0.85, flash))
+    return out
+
+
+class Slam:
+    """Text that lands hard: starts big, snaps to size, shakes the frame."""
+
+    def __init__(self, layer, cy, at=0.0, power=1.0, cx=W / 2, fade=False, jitter=0.0):
+        self.layer, self.cy, self.at, self.power, self.cx, self.fade, self.jitter = layer, cy, at, power, cx, fade, jitter
+
+    def draw(self, frame, t):
+        tau = t - self.at
+        if tau < 0:
+            return 0.0, 0.0
+        if self.fade:                                  # the quiet kind: it just appears
+            place(frame, self.layer, self.cx, self.cy, 1.0 + 0.012 * tau, ease(tau / 0.5))
+            return 0.0, 0.0
+        scale = 1.0 + 1.7 * self.power * math.exp(-tau * 22) + 0.022 * tau
+        jx = rng.uniform(-1, 1) * self.jitter * 6
+        place(frame, self.layer, self.cx + jx, self.cy, scale, min(1.0, tau * FPS / 2 + 0.35))
+        return 0.75 * self.power * math.exp(-tau * 16), 15 * self.power * math.exp(-tau * 9)
+
+
+# ----------------------------------------------------------------------------
+# Sound
+# ----------------------------------------------------------------------------
+SR = 44100
+
+
+def env(n, attack, decay):
+    t = np.arange(n) / SR
+    return np.minimum(1, t / max(attack, 1e-4)) * np.exp(-t / decay)
+
+
+def lowpass(x, hz, order=2):
+    return signal.sosfilt(signal.butter(order, hz, "low", fs=SR, output="sos"), x)
+
+
+def highpass(x, hz, order=2):
+    return signal.sosfilt(signal.butter(order, hz, "high", fs=SR, output="sos"), x)
+
+
+def saws(freq, n, voices=5, spread=0.012):
+    t = np.arange(n) / SR
+    out = np.zeros(n)
+    for v in range(voices):
+        f = freq * (1 + spread * (v - (voices - 1) / 2) / voices * 2)
+        out += signal.sawtooth(2 * np.pi * f * t + v * 1.7)
+    return out / voices
+
+
+def note(semis_from_d2):
+    return 73.42 * 2 ** (semis_from_d2 / 12)
+
+
+def boom(power=1.0):
+    n = int(SR * 2.6)
+    t = np.arange(n) / SR
+    sweep = 34 + 70 * np.exp(-t * 16)
+    body = np.sin(2 * np.pi * np.cumsum(sweep) / SR) * np.exp(-t / 0.75)
+    crack = lowpass(np.random.default_rng(1).standard_normal(n), 900) * np.exp(-t / 0.05) * 0.9
+    rumble = lowpass(np.random.default_rng(2).standard_normal(n), 120, 3) * np.exp(-t / 0.9) * 1.6
+    return np.tanh((body * 1.7 + crack + rumble) * 1.5) * 0.95 * power
+
+
+def braam(semis, seconds, bright=900):
+    n = int(SR * seconds)
+    x = saws(note(semis), n, 7, 0.02) + 0.7 * saws(note(semis + 12), n, 5, 0.015) + 0.5 * saws(note(semis - 12), n, 3)
+    x = lowpass(x, bright, 2)
+    t = np.arange(n) / SR
+    shape = np.minimum(1, t / 0.04) * np.exp(-t / (seconds * 0.55)) * (1 + 0.25 * np.sin(2 * np.pi * 5.5 * t) * np.minimum(1, t))
+    return np.tanh(x * shape * 3.2) * 0.62
+
+
+def taiko(power=1.0, low=True):
+    n = int(SR * 0.5)
+    t = np.arange(n) / SR
+    f = (62 if low else 96) + 60 * np.exp(-t * 30)
+    body = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / (0.16 if low else 0.09))
+    skin = lowpass(np.random.default_rng(3).standard_normal(n), 2400) * np.exp(-t / 0.018) * 0.5
+    return np.tanh((body + skin) * 1.6) * 0.6 * power
+
+
+def stab(semis, seconds=0.2, power=1.0, bright=2600):
+    """A short string note: the ostinato every trailer has."""
+    n = int(SR * seconds)
+    x = lowpass(saws(note(semis), n, 5, 0.014) + 0.5 * saws(note(semis + 12), n, 3, 0.01), bright)
+    return x * env(n, 0.006, seconds * 0.38) * 0.42 * power
+
+
+def pluck(semis, power=1.0):
+    n = int(SR * 0.45)
+    t = np.arange(n) / SR
+    f = note(semis)
+    x = np.sin(2 * np.pi * f * t) + 0.4 * np.sin(2 * np.pi * 2 * f * t) + 0.2 * np.sin(2 * np.pi * 3 * f * t)
+    return x * np.exp(-t / 0.11) * 0.5 * power
+
+
+def bell(freq, seconds=1.6, power=1.0):
+    n = int(SR * seconds)
+    t = np.arange(n) / SR
+    x = sum(a * np.sin(2 * np.pi * freq * r * t) * np.exp(-t / (seconds * d))
+            for r, a, d in ((1, 1, 0.35), (2.76, 0.45, 0.2), (5.4, 0.25, 0.1), (8.9, 0.12, 0.06)))
+    return x * 0.22 * power
+
+
+def riser(seconds):
+    n = int(SR * seconds)
+    t = np.arange(n) / SR
+    k = t / seconds
+    noise = np.random.default_rng(4).standard_normal(n)
+    sweep = np.zeros(n)
+    step = 2048                                        # a filter that opens as it goes
+    for i in range(0, n, step):
+        hz = 200 + 7000 * (i / n) ** 2
+        sweep[i:i + step] = signal.sosfilt(signal.butter(2, [hz * 0.7, min(hz * 1.4, 20000)], "band", fs=SR, output="sos"),
+                                           noise[max(0, i - step):i + step])[-len(sweep[i:i + step]):]
+    tone = np.sin(2 * np.pi * np.cumsum(110 * 2 ** (k * 3.2)) / SR) * 0.35
+    return (sweep * 0.5 + tone) * k ** 2.2 * 0.7
+
+
+def heartbeat():
+    n = int(SR * 0.5)
+    t = np.arange(n) / SR
+    one = np.sin(2 * np.pi * 52 * t) * np.exp(-t / 0.07)
+    two = np.zeros(n)
+    d = int(SR * 0.17)
+    two[d:] = one[:n - d] * 0.7
+    return (one + two) * 0.55
+
+
+def addon_voice(path, text, speed=150):
+    """The addon speaks for itself: flat, a little like a small speaker."""
     raw = Path(str(path) + ".raw.wav")
-    run("espeak-ng", "-v", "en-gb-x-rp", "-s", speed, "-p", pitch, "-g", 2, "-w", raw, text)
+    run("espeak-ng", "-v", "en-gb-x-rp", "-s", speed, "-p", 42, "-w", raw, text)
     run("ffmpeg", "-y", "-loglevel", "error", "-i", raw, "-af",
-        "asetrate=22050*%f,aresample=44100,atempo=%f,bass=g=7:f=110,aecho=0.8:0.6:70|140:0.28|0.16,volume=2.2"
-        % (deep, min(1.25, 1 / deep * 0.92)), "-ac", "2", path)
+        "highpass=f=260,lowpass=f=3400,acompressor=threshold=-18dB:ratio=4,volume=3.0,aresample=%d" % SR, "-ac", "1", path)
+    with wave.open(str(path)) as f:
+        return np.frombuffer(f.readframes(f.getnframes()), dtype="<i2").astype(float) / 32768
 
 
+def compose(total, marks, voice_dir):
+    """The whole track, built on the same clock as the pictures."""
+    n = int(SR * (total + 1.5))
+    dry, wet = np.zeros(n), np.zeros(n)                # wet goes through the hall as well
+    front = np.zeros(n)                                # the voice and the small jokes: added at a fixed level
+
+    def add(buf, sound, at, gain=1.0):
+        i = int(at * SR)
+        if i >= n or i < 0:
+            return
+        j = min(n, i + len(sound))
+        buf[i:j] += sound[:j - i] * gain
+
+    m = marks
+    # Act one: a heartbeat in the dark, and a hit for each card.
+    for k in range(int((m["winter"] - 0) / 1.0)):
+        if k * 1.0 < m["notenough"]:
+            add(dry, heartbeat(), k * 1.0, 0.9)
+    for name, power in (("world", 1.0), ("auctions", 0.55), ("player", 0.8), ("sheet", 0.9)):
+        add(wet, boom(power), m[name])
+        add(wet, braam(0, 1.6), m[name], 0.55 * power)
+    # "It was not enough": everything stops, one sad little pluck.
+    add(front, pluck(24, 0.9), m["notenough"] + 0.25)
+    add(front, pluck(19, 0.9), m["notenough"] + 0.6)
+
+    # Act two: drums and the ostinato, building to the cut.
+    ostinato = [12, 12, 15, 12, 19, 12, 15, 14]        # D D F D A D F E
+    start, stop = m["winter"], m["silence"]
+    add(wet, boom(1.0), start)
+    add(wet, braam(0, 2.2), start, 0.8)
+    eighths = int((stop - start) / (BEAT / 2))
+    for k in range(eighths):
+        at = start + k * BEAT / 2
+        build = 0.45 + 0.55 * k / eighths
+        lift = 12 if at >= m["rapid"] else 0
+        add(wet, stab(ostinato[k % 8] + lift, 0.2, build), at, 2.6)
+        add(wet, stab(ostinato[k % 8] + lift - 12, 0.2, build * 0.7), at, 2.6)
+        accent = k % 4 == 0
+        add(dry, taiko(1.0 if accent else 0.5, low=accent or k % 2 == 0), at, build * 2.2)
+        if at >= m["rapid"]:                           # sixteenths under the fast cuts
+            add(dry, taiko(0.6, low=False), at + BEAT / 4, build * 2.2)
+    for name in ("recipe", "wave", "buttons"):
+        add(wet, boom(0.8), m[name])
+        add(wet, braam({"recipe": 0, "wave": 3, "buttons": 5}[name], 1.5), m[name], 0.6)
+    add(dry, riser(m["silence"] - m["rapid"]), m["rapid"], 4.5)
+    add(wet, boom(0.8), m["rapid"])
+    for k in range(8):                                 # a note climbing under the fast cuts
+        add(wet, braam(k, 0.3, 1500), m["rapid"] + k * 0.125, 0.75)
+    add(wet, boom(1.0), m["future"])
+    add(wet, braam(7, m["silence"] - m["future"], 1400), m["future"], 0.95)
+    # The cut: silence, hard.
+    cut = int(m["silence"] * SR)
+    for buf in (dry, wet):
+        buf[cut:] = 0
+        buf[cut - 300:cut] *= np.linspace(1, 0, 300)
+
+    # The joke, in silence: the addon itself.
+    said = addon_voice(voice_dir / "early.wav", "Too early to forecast.")
+    add(front, said / max(1e-6, np.abs(said).max()), m["silence"] + 0.75, 0.8)
+    # "...mostly": two notes, falling.
+    add(front, pluck(17, 1.0), m["mostly"] + 0.05)
+    add(front, pluck(12, 1.0), m["mostly"] + 0.4)
+
+    # The finale: everything, an octave up, a hit on every cut.
+    start, stop = m["margin"], m["title"]
+    eighths = int((stop - start) / (BEAT / 2))
+    for k in range(eighths):
+        at = start + k * BEAT / 2
+        add(wet, stab(ostinato[k % 8] + 12, 0.2, 1.0), at, 2.8)
+        add(wet, stab(ostinato[k % 8], 0.2, 0.8), at, 2.8)
+        add(dry, taiko(1.0 if k % 2 == 0 else 0.6, low=k % 2 == 0), at, 2.4)
+        add(dry, taiko(0.5, low=False), at + BEAT / 4, 2.4)
+    for name, semis in (("margin", 0), ("profit", 3), ("lose", 5)):
+        add(wet, boom(0.9), m[name])
+        add(wet, braam(semis, 1.3), m[name], 0.7)
+    add(dry, riser(0.9), m["title"] - 0.9, 1.8)
+    # The title: the biggest hit, a major chord that rings, bells on top.
+    add(wet, boom(1.25), m["title"])
+    for semis, gain in ((0, 1.0), (7, 0.6), (16, 0.5)):          # D, A, F sharp
+        add(wet, braam(semis, 3.4, 1700), m["title"], gain * 0.8)
+    for i, f in enumerate((587.3, 740.0, 880.0, 1174.7, 1480.0)):
+        add(wet, bell(f, 2.2), m["title"] + 0.12 + i * 0.11)
+    # The stinger: a till, and the small print at speed.
+    add(wet, bell(1318.5, 1.2, 1.4), m["rated"])
+    add(wet, bell(1975.5, 1.2, 1.0), m["rated"] + 0.07)
+    small = addon_voice(voice_dir / "small.wav", "Experimental. Deposits not included.", speed=215)
+    add(front, small / max(1e-6, np.abs(small).max()), m["rated"] + 0.45, 0.6)
+
+    # A hall: the wet part convolved with a decaying burst of noise.
+    tail = np.random.default_rng(9).standard_normal(int(SR * 1.5)) * np.exp(-np.arange(int(SR * 1.5)) / (SR * 0.42))
+    tail = lowpass(tail, 5200) * 0.02
+    hall = signal.fftconvolve(wet, tail)[:n]
+    mono = dry + wet + hall * 0.9
+    side = signal.fftconvolve(wet, np.roll(tail, 331))[:n] * 0.5        # a little width
+    # The cut is a cut: no hall ringing on into the quiet.
+    gate = np.ones(n)
+    a, b = int(m["silence"] * SR), int(m["mostly"] * SR)
+    gate[a:b] = 0
+    gate[a - 1300:a] = np.linspace(1, 0, 1300)
+    mono, side = mono * gate, side * gate
+    left, right = mono + side, mono - side
+    # Level the music by its loud passages, not its single loudest sample,
+    # press it gently against the ceiling, then put the voice in front.
+    loud = max(np.percentile(np.abs(mono), 99.7), 1e-9)
+    stereo = np.tanh(np.stack([left, right], axis=1) / loud * 0.9) * 0.9
+    stereo += front[:, None]
+    stereo = np.clip(stereo, -0.98, 0.98)
+    end = int(total * SR)
+    stereo = stereo[:end + int(SR * 0.8)]
+    stereo[-int(SR * 0.6):] *= np.linspace(1, 0, int(SR * 0.6))[:, None]
+    return stereo
+
+
+# ----------------------------------------------------------------------------
+# The film
+# ----------------------------------------------------------------------------
 def main():
-    frames, real_svg, out = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+    frames_dir, real_svg, out = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
     work = Path(tempfile.mkdtemp(prefix="cg-trailer-"))
-    stills = {}
 
-    def still(name, source=None):
-        if name not in stills:
-            png = work / (name + ".png")
-            run("rsvg-convert", "-w", 1920, source or (frames / "stills" / (name + ".svg")), "-o", png)
-            stills[name] = png
-        return stills[name]
+    def picture(name, source=None, width=1920):
+        png = work / (name + ".png")
+        if not png.exists():
+            run("rsvg-convert", "-w", width, source or (frames_dir / "stills" / (name + ".svg")), "-o", png)
+        return Image.open(png).convert("RGB")
 
-    real = still("real", real_svg)
-    for n in range(1, 30):                     # the rush, as frames
-        src = frames / "wave" / ("%04d.svg" % n)
-        if src.exists() and not (work / ("wave%04d.png" % n)).exists():
-            run("rsvg-convert", "-w", 1280, src, "-o", work / ("wave%04d.png" % n))
-    for n in range(1, 62):
-        src = frames / "flow" / ("%04d.svg" % n)
-        if src.exists():
-            run("rsvg-convert", "-w", 1280, src, "-o", work / ("flow%04d.png" % n))
+    real = picture("real", real_svg)
+    lists = picture("opportunities")
+    plan = picture("plan")
+    flow = [picture("flow%02d" % i, frames_dir / "flow" / ("%04d.svg" % i), 1280) for i in range(1, 31, 2)]
+    rush = [picture("wave%02d" % i, frames_dir / "wave" / ("%04d.svg" % i), 1280) for i in range(1, 30)]
+    quick = [picture(n) for n in ("overview", "trends", "week", "rank", "when", "supply-demand", "this-item", "wave-ride")]
 
-    # The film: (kind, what, least seconds, spoken line, drum).
-    shots = [
-        ("card", dict(lines=[("THE FOLLOWING PREVIEW HAS BEEN APPROVED FOR", 26, "#ffffff", 3),
-                             ("ALL AUCTION HOUSES", 64, "#ffffff", 8),
-                             ("by nobody in particular", 22, "#d8ffd8", 2)], background="#1a7a2e", band="#ffffff"),
-         3.2, None, False),
-        ("card", dict(lines=[("IN A WORLD", 84, WHITE, 14)]), 2.4, "In a world.", True),
-        ("still", dict(image="overview", crop=(0, 60, 1920, 1080), caption="where Copper Ore costs 18 copper"),
-         3.0, "Where copper ore. Costs eighteen copper.", False),
-        ("card", dict(lines=[("ONE PLAYER", 84, WHITE, 14)]), 2.2, "One player.", True),
-        ("card", dict(lines=[("WAS TIRED OF", 44, GREY, 8), ("DOING THE SUMS", 84, GOLD, 10)]),
-         2.8, "Was tired. Of doing the sums.", True),
-        ("still", dict(image="opportunities", crop=(100, 170, 1220, 686), zoom=(1.0, 1.12),
-                       caption="He had a spreadsheet.\nIt was not enough."),
-         3.2, "He had a spreadsheet. It was not enough.", False),
-        ("card", dict(lines=[("THIS WINTER", 96, WHITE, 16)]), 2.4, "This winter.", True),
-        ("seq", dict(pattern="flow%04d.png", rate=20, caption="IT KNOWS WHAT THINGS ARE MADE OF", colour=GOLD),
-         2.8, "It knows what things are made of.", True),
-        ("seq", dict(pattern="wave%04d.png", rate=9, caption="IT RIDES THE WAVE", colour=GOLD),
-         3.2, "It rides the wave.", True),
-        ("still", dict(image="plan", zoom=(1.0, 1.06), caption="IT PRESSES THE BUTTONS", colour=GOLD),
-         2.6, "It presses the buttons.", True),
-        ("still", dict(image="plan", crop=(1100, 380, 800, 450), zoom=(1.0, 1.0),
-                       caption="(when you are standing next to them)", colour=GREY),
-         2.6, "When you are standing next to them.", False),
-        ("card", dict(lines=[("IT SEES THE FUTURE", 80, GOLD, 10)]), 2.2, "It sees. The future.", True),
-        ("still", dict(image="real", crop=(1290, 640, 560, 315), zoom=(1.0, 1.0),
-                       caption="\"Too early to forecast\"", colour=WHITE),
-         2.8, "Too early to forecast.", False),
-        ("card", dict(lines=[("...MOSTLY", 72, GREY, 12)]), 1.8, "Mostly.", False),
-        ("card", dict(lines=[("BASED ON A", 40, GREY, 8), ("TRUE MARGIN", 92, WHITE, 12)]),
-         2.4, "Based on a true margin.", True),
-        ("still", dict(image="real", crop=(1300, 250, 560, 315), zoom=(1.0, 1.05),
-                       caption="+6 silver, 11 copper\ngive or take 18 silver", colour=GREEN),
-         3.4, "Six silver. Eleven copper. Give or take. Eighteen silver.", False),
-        ("card", dict(lines=[("“Could lose 30 silver.”", 60, RED, 2), ("", 20, GREY),
-                             ("— the addon, about its own advice", 30, GREY, 2)]),
-         2.8, "Critics are saying. Could lose thirty silver.", True),
-        ("card", dict(lines=[("“I don’t know.”", 68, WHITE, 2), ("", 20, GREY),
-                             ("— the addon, when it doesn’t", 30, GREY, 2)]),
-         2.6, "And. I don't know.", True),
-        ("card", dict(lines=[("CRAFTGRAPH", 132, GOLD, 18), ("", 16, GREY), ("/cg", 54, WHITE, 6)]),
-         3.6, "Craft. Graph.", True),
-        ("card", dict(lines=[("Profits shown after the auction house's cut. Deposits not included.", 19, GREY, 1),
-                             ("Past prices are no promise of future prices, least of all on a two-day-old realm.", 19, GREY, 1),
-                             ("Experimental. Python optional. Spreadsheet no longer required.", 19, GREY, 1),
-                             ("Not affiliated with or endorsed by Blizzard.", 19, GREY, 1),
-                             ("No sellers were undercut by more than one copper.", 19, GREY, 1),
-                             ("", 24, GREY), ("RATED G FOR GOLD", 44, GOLD, 10),
-                             ("Coming soon to an auction house near you", 28, WHITE, 3)]),
-         4.5, "Profits shown after the auction house's cut. Deposits not included. Python optional. "
-              "No sellers were undercut by more than one copper. Rated G. For gold.", False),
+    def big(text, size=150, colour=WHITE, **kw):
+        return text_layer(text, size, colour, **kw)
+
+    def over(text, size=74, colour="gold"):
+        return text_layer(text, size, colour, outline=4, plate=True)
+
+    black = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+    mid = H / 2
+
+    # (name, seconds, picture for a moment, what lands on it). Every length is a whole number of beats.
+    scenes = [
+        ("world", 2.0, lambda k, t: black, [Slam(big("IN A WORLD", 170, tracking=0.16), mid, at=0.0)]),
+        ("auctions", 1.5, lambda k, t: camera(lists, (100, 170, 1220, 686), (100, 420, 1220, 686), ease(k)),
+         [Slam(over("OF 190,000 AUCTIONS", 96), mid + 150, at=0.0, power=0.7)]),
+        ("player", 1.0, lambda k, t: black, [Slam(big("ONE PLAYER", 170, tracking=0.12), mid, at=0.0)]),
+        ("sheet", 1.5, lambda k, t: black, [Slam(big("HAD A SPREADSHEET", 140, "gold"), mid, at=0.0)]),
+        ("notenough", 1.5, lambda k, t: black,
+         [Slam(text_layer("it was not enough.", 64, GREY, 0.02, ITALIC, glow=False), mid, at=0.25, fade=True)]),
+        ("winter", 1.0, lambda k, t: black, [Slam(big("THIS WINTER", 190, tracking=0.14), mid, at=0.0, power=1.2)]),
+        ("recipe", 1.5, lambda k, t: camera(flow[min(len(flow) - 1, int(t * 10))], (60, 130, 900, 506), (150, 180, 720, 405), ease(k)),
+         [Slam(over("IT KNOWS THE RECIPE"), mid + 170, at=0.0, power=0.7)]),
+        ("wave", 1.5, lambda k, t: camera(rush[min(len(rush) - 1, int(k * len(rush)))], (850, 395, 400, 225), (835, 385, 430, 242), k),
+         [Slam(over("IT RIDES THE WAVE"), mid + 170, at=0.0, power=0.7)]),
+        ("buttons", 1.5, lambda k, t: camera(plan, (820, 330, 1100, 619), (820, 1000, 1100, 619), ease(k)),
+         [Slam(over("IT PRESSES THE BUTTONS"), mid + 170, at=0.0, power=0.7)]),
+        ("rapid", 1.0, lambda k, t: camera(quick[min(7, int(t / 0.125))], (120, 110, 1680, 945), (200, 155, 1520, 855), (t % 0.125) / 0.125), []),
+        ("future", 1.5, lambda k, t: black, [Slam(big("IT SEES THE FUTURE", 176, "gold", tracking=0.08), mid, at=0.0, power=1.4)]),
+        ("silence", 2.5, lambda k, t: camera(real, (1290, 640, 560, 315), (1330, 664, 470, 264), k),
+         [Slam(text_layer("“Too early to forecast.”", 60, WHITE, 0.02, MEDIUM, glow=False, outline=4, plate=True), mid + 185, at=0.75, fade=True)]),
+        ("mostly", 1.0, lambda k, t: black,
+         [Slam(text_layer("...mostly.", 84, GREY, 0.04, ITALIC, glow=False), mid, at=0.05, fade=True)]),
+        ("margin", 1.0, lambda k, t: black, [Slam(big("BASED ON A", 70, GREY, tracking=0.3, glow=False), mid - 105, at=0.0, power=0.5),
+                                             Slam(big("TRUE MARGIN", 180), mid + 30, at=0.0)]),
+        ("profit", 1.5, lambda k, t: camera(real, (1300, 235, 560, 315), (1330, 252, 500, 281), ease(k)),
+         [Slam(over("+6 SILVER 11 COPPER", 92, GREEN), mid + 105, at=0.0, power=0.8),
+          Slam(over("GIVE OR TAKE 18 SILVER", 56, WHITE), mid + 195, at=0.5, power=0.5)]),
+        ("lose", 1.0, lambda k, t: black, [Slam(big("COULD LOSE 30 SILVER", 150, RED), mid, at=0.0, power=1.3, jitter=1.0)]),
+        ("title", 3.0, None, []),
+        ("rated", 2.0, lambda k, t: black,
+         [Slam(big("RATED G FOR GOLD", 110, "gold", tracking=0.14), mid - 30, at=0.0, power=0.8),
+          Slam(text_layer("Experimental. Deposits not included. Not affiliated with or endorsed by Blizzard.", 26, GREY, 0.02, MEDIUM, glow=False),
+               mid + 95, at=0.45, fade=True)]),
     ]
-
-    clips, events, at = [], [], 0.0
-    for i, (kind, what, least, line, drum) in enumerate(shots):
-        clip = work / ("clip%02d.mp4" % i)
-        seconds = least
-        if line:
-            spoken = work / ("voice%02d.wav" % i)
-            fast = i == len(shots) - 1
-            voice(spoken, line, speed=230 if fast else 138, pitch=30 if fast else 16, deep=0.92 if fast else 0.78)
-            seconds = max(least, length(spoken) + 0.35)
-            events.append((at + 0.25, spoken, 1.0))
-        if drum:
-            events.append((at, "boom", 1.0))
-        if kind == "card":
-            png = work / ("card%02d.png" % i)
-            card(png, **what)
-            still_clip(clip, png, seconds, zoom=(1.0, 1.04))
-        elif kind == "still":
-            what = dict(what)
-            image = what.pop("image")
-            image = stills.get(image) or still(image)
-            still_clip(clip, image, seconds, **what)
-        else:
-            what = dict(what)
-            sequence_clip(clip, work / what.pop("pattern"), what.pop("rate"), seconds, **what)
-        clips.append(clip)
+    marks, at = {}, 0.0
+    for name, seconds, *_ in scenes:
+        marks[name] = at
         at += seconds
     total = at
 
-    # Picture.
-    listing = work / "clips.txt"
-    listing.write_text("".join("file '%s'\n" % c for c in clips))
-    silent = work / "silent.mp4"
-    run("ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", listing, "-c", "copy", silent)
+    # The title card: gold letters, a glint that sweeps across, sparks rising.
+    title = text_layer("CRAFTGRAPH", 230, "gold", tracking=0.12, fit=0.84)
+    slash = text_layer("/cg", 80, WHITE, 0.08, MEDIUM, glow=False)
+    sparks = [(rng.uniform(0, W), rng.uniform(0, H), rng.uniform(20, 70), rng.uniform(1.5, 3.5)) for _ in range(70)]
 
-    # Sound: a drum for the cards, a low drone under everything that drops
-    # out for the punchlines, and the voice.
-    boom = work / "boom.wav"
-    run("ffmpeg", "-y", "-loglevel", "error",
-        "-f", "lavfi", "-i", "sine=frequency=46:duration=2.2",
-        "-f", "lavfi", "-i", "anoisesrc=color=brown:duration=2.2:amplitude=0.9",
-        "-filter_complex",
-        "[0:a]volume='3.2*exp(-2.2*t)':eval=frame[s];[1:a]lowpass=f=160,volume='2.6*exp(-7*t)':eval=frame[n];"
-        "[s][n]amix=inputs=2:normalize=0,aecho=0.8:0.5:90:0.35,alimiter=limit=0.95",
-        "-ac", "2", "-ar", "44100", boom)
-    drone = work / "drone.wav"
-    run("ffmpeg", "-y", "-loglevel", "error",
-        "-f", "lavfi", "-i", "sine=frequency=55:duration=%.2f" % total,
-        "-f", "lavfi", "-i", "sine=frequency=82.4:duration=%.2f" % total,
-        "-f", "lavfi", "-i", "sine=frequency=110.6:duration=%.2f" % total,
-        "-filter_complex",
-        "[0:a][1:a][2:a]amix=inputs=3:normalize=0,tremolo=f=0.35:d=0.5,volume=0.16,"
-        "afade=t=in:d=3,afade=t=out:st=%.2f:d=2.5" % (total - 3),
-        "-ac", "2", "-ar", "44100", drone)
-    inputs, graph, names = ["-i", drone], [], ["[0:a]"]
-    for n, (when, what, gain) in enumerate(events, start=1):
-        inputs += ["-i", boom if what == "boom" else what]
-        graph.append("[%d:a]adelay=%d:all=1,volume=%.2f[e%d]" % (n, int(when * 1000), gain, n))
-        names.append("[e%d]" % n)
-    graph.append("%samix=inputs=%d:normalize=0:duration=first,alimiter=limit=0.95[a]" % ("".join(names), len(names)))
+    def title_frame(k, t):
+        frame = black.copy()
+        glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        g = ImageDraw.Draw(glow)
+        for r, a in ((520, 16), (380, 22), (250, 30)):
+            g.ellipse((W / 2 - r * 1.6, mid - r * 0.55, W / 2 + r * 1.6, mid + r * 0.55), fill=(255, 170, 30, int(a * min(1, t * 3))))
+        frame = Image.alpha_composite(frame, glow.filter(ImageFilter.GaussianBlur(60)))
+        d = ImageDraw.Draw(frame)
+        for x, y, speed, size in sparks:
+            yy = (y - t * speed) % H
+            d.ellipse((x, yy, x + size, yy + size), fill=(255, 215, 90, int(170 * min(1, t * 2))))
+        scale = 1.0 + 1.9 * math.exp(-t * 20) + 0.018 * t
+        layer = title
+        if 0.5 < t < 1.5:                              # the glint
+            band = Image.new("L", title.size, 0)
+            x = int((t - 0.5) * (title.width + 400)) - 200
+            ImageDraw.Draw(band).polygon([(x, 0), (x + 90, 0), (x + 10, title.height), (x - 80, title.height)], fill=230)
+            shine = ImageChops.multiply(band.filter(ImageFilter.GaussianBlur(14)), title.info["mask"])
+            layer = title.copy()
+            layer.paste(Image.new("RGBA", title.size, (255, 255, 240, 255)), (0, 0), shine)
+        place(frame, layer, W / 2, mid - 20, scale, min(1.0, t * FPS / 2 + 0.3))
+        if t > 0.9:
+            place(frame, slash, W / 2, mid + 150, 1.0, ease((t - 0.9) / 0.4))
+        return frame, 0.9 * math.exp(-t * 14), 22 * math.exp(-t * 8)
+
+    # Pictures, piped straight into the encoder.
+    silent = work / "silent.mp4"
+    encoder = subprocess.Popen(
+        ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (W, H), "-r", str(FPS),
+         "-i", "-", "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p", str(silent)],
+        stdin=subprocess.PIPE)
+    hard = {"silence", "mostly", "notenough"}          # these arrive without a flash: the joke needs the quiet
+    for name, seconds, base, lands in scenes:
+        count = int(round(seconds * FPS))
+        for i in range(count):
+            t = i / FPS
+            k = i / max(1, count - 1)
+            if name == "title":
+                frame, flash, shake = title_frame(k, t)
+            else:
+                frame = base(k, t).copy()
+                flash = 0.0 if name in hard else 0.5 * math.exp(-t * 18)        # a flash on every cut
+                shake = 0.0
+                for land in lands:
+                    f, s = land.draw(frame, t)
+                    flash, shake = max(flash, f), max(shake, s)
+            offset = (rng.uniform(-1, 1) * shake, rng.uniform(-1, 1) * shake * 0.6)
+            dim = 1.0
+            if name == "rated" and t > seconds - 0.4:
+                dim = max(0.0, (seconds - t) / 0.4)
+            encoder.stdin.write(finish(frame, flash, offset, dim).tobytes())
+    encoder.stdin.close()
+    if encoder.wait() != 0:
+        sys.exit("the encoder failed")
+
+    # Sound, on the same clock.
+    stereo = compose(total, marks, work)
     sound = work / "sound.wav"
-    run("ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", ";".join(graph), "-map", "[a]", sound)
+    with wave.open(str(sound), "w") as f:
+        f.setnchannels(2)
+        f.setsampwidth(2)
+        f.setframerate(SR)
+        f.writeframes((np.clip(stereo, -1, 1) * 32767).astype("<i2").tobytes())
     out.parent.mkdir(parents=True, exist_ok=True)
-    run("ffmpeg", "-y", "-loglevel", "error", "-i", silent, "-i", sound, "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+    run("ffmpeg", "-y", "-loglevel", "error", "-i", silent, "-i", sound, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
         "-shortest", "-movflags", "+faststart", out)
-    print("%s  (%.0f seconds; working files in %s)" % (out, total, work))
+    print("%s  (%.1f seconds)" % (out, total))
+    for name in sorted(marks, key=marks.get):
+        print("  %5.1f  %s" % (marks[name], name))
 
 
 if __name__ == "__main__":

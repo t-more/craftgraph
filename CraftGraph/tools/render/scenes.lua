@@ -67,11 +67,13 @@ end
 ns.UI.Focus(hero) settle()
 frame("pictures", { view = boxView(true), zoom = 2, caption = "Price history, with a forecast when it is worth one", captionScale = 1.1 }, 2.4)
 tour("Price history with the certainty drawn as a glow, and suns and moons for the time of day", 4)
-ns.settings.chartFlow = true ns.UI.Refresh() settle()
-frame("pictures", { view = boxView(true), zoom = 2, caption = "Tick Supply: units listed (blue) and sold a day (green)", captionScale = 1.1 }, 2.4)
+ns.settings.chartFlow, ns.settings.chartDemand = true, true
+ns.UI.Refresh() settle()
+frame("pictures", { view = boxView(true), zoom = 2, caption = "Tick Supply and Demand: units listed (blue), sold a day (green)", captionScale = 1.1 }, 2.4)
 still("supply-demand", { view = boxView(), zoom = 2 })
-tour("Tick Supply to see how much was listed and how much sold, beside the price", 4)
-ns.settings.chartFlow = false ns.UI.Refresh() settle()
+tour("Tick Supply and Demand to see how much was listed and how much sold, beside the price", 4)
+ns.settings.chartFlow, ns.settings.chartDemand = false, false
+ns.UI.Refresh() settle()
 ns.settings.sideChart = "week" ns.UI.Refresh() settle()
 side.week.Select(14)
 frame("pictures", { view = boxView(true), zoom = 2, caption = "Every scan folded onto one week", captionScale = 1.1 }, 2.4)

@@ -195,7 +195,7 @@ local function CreatePanel(parent)
   Divider()
 
   -- One box, two pictures: the price over time, or the price by time of week.
-  local chartHeader = Button(p, "Price history", 100)
+  local chartHeader = Button(p, "Price history", 88)
   chartHeader:SetHeight(18)
   chartHeader:SetPoint("TOPLEFT", 12, y + 3)
   chartHeader:SetScript("OnClick", function()
@@ -214,7 +214,7 @@ local function CreatePanel(parent)
     local d = ns.settings.chartDays or 14
     return d > 0 and (d .. " days") or "All"
   end
-  p.range = Button(p, RangeText(), 58)
+  p.range = Button(p, RangeText(), 52)
   p.range:SetHeight(18)
   p.range:SetPoint("LEFT", chartHeader, "RIGHT", 4, 0)
   p.range:SetScript("OnClick", function(self)
@@ -230,11 +230,11 @@ local function CreatePanel(parent)
     "How far back the chart looks: 14 days, 90 days, or everything recorded for this item.")
   p.certainty = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
   p.certainty:SetSize(22, 22)
-  p.certainty:SetPoint("TOPRIGHT", -150, y + 5)
+  p.certainty:SetPoint("TOPRIGHT", -168, y + 5)
   -- Supply and demand lines on the same chart.
   p.flow = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
   p.flow:SetSize(22, 22)
-  p.flow:SetPoint("TOPRIGHT", -64, y + 5)
+  p.flow:SetPoint("TOPRIGHT", -116, y + 5)
   p.flowLabel = Text(p, "GameFontHighlightSmall")
   p.flowLabel:SetPoint("LEFT", p.flow, "RIGHT", 2, 0)
   p.flowLabel:SetText("Supply")
@@ -242,19 +242,33 @@ local function CreatePanel(parent)
     ns.settings.chartFlow = self:GetChecked() and true or false
     UI.Refresh()
   end)
-  Tip(p.flow, "Supply and demand",
-    "Adds two lines to the price chart, each on its own scale: how many were listed at each scan "
-    .. "(blue) and how many sold a day between full scans (green). A price that falls while the blue "
-    .. "line climbs is goods piling up; a price that rises while the green line is high is real demand.")
+  Tip(p.flow, "Supply",
+    "Adds a blue line to the price chart: how many were listed at each scan, on its own scale from "
+    .. "nothing to the most seen. A price that falls while this line climbs is goods piling up.")
+  -- Demand: units sold a day, with its scale in units a day.
+  p.demand = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
+  p.demand:SetSize(22, 22)
+  p.demand:SetPoint("TOPRIGHT", -54, y + 5)
+  p.demandLabel = Text(p, "GameFontHighlightSmall")
+  p.demandLabel:SetPoint("LEFT", p.demand, "RIGHT", 2, 0)
+  p.demandLabel:SetText("Demand")
+  p.demand:SetScript("OnClick", function(self)
+    ns.settings.chartDemand = self:GetChecked() and true or false
+    UI.Refresh()
+  end)
+  Tip(p.demand, "Demand",
+    "Adds a green line to the price chart: how many sold a day, judged from the auctions that "
+    .. "vanished between full scans and evened out over a stretch of time. Its scale is at the "
+    .. "right edge in units a day. It needs two full scans within twelve hours to start.")
   local label = Text(p, "GameFontHighlightSmall")
   label:SetPoint("LEFT", p.certainty, "RIGHT", 2, 0)
-  label:SetText("Certainty")
+  label:SetText("Glow")
   p.certaintyLabel = label
   p.certainty:SetScript("OnClick", function(self)
     ns.settings.certainty = self:GetChecked() and true or false
     UI.Refresh()
   end)
-  Tip(p.certainty, "Certainty",
+  Tip(p.certainty, "Certainty glow",
     "Shades the chart by how sure the price estimate is: tight and bright near real scans, "
     .. "wide and faint in gaps and in the forecast.")
   y = y - 20
@@ -477,13 +491,16 @@ local function UpdatePanel()
   p.flow:SetShown(not weekPicture)
   p.flowLabel:SetShown(not weekPicture)
   p.flow:SetChecked(ns.settings.chartFlow and true or false)
+  p.demand:SetShown(not weekPicture)
+  p.demandLabel:SetShown(not weekPicture)
+  p.demand:SetChecked(ns.settings.chartDemand and true or false)
   chart:SetShown(not weekPicture)
   p.week:SetShown(weekPicture)
   if weekPicture then
     UI.UpdateWeekStrip(p.week, id)
   else
     chart:Update(id, { band = ns.settings.certainty, craft = unitCraft, vendor = ns.VendorSell(id),
-      days = ns.settings.chartDays, flow = ns.settings.chartFlow })
+      days = ns.settings.chartDays, flow = ns.settings.chartFlow, demand = ns.settings.chartDemand })
   end
   local nextStep = ""
   if state.job and state.job.text then

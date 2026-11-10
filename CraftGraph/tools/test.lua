@@ -193,6 +193,26 @@ FireEvent("PLAYER_LOGIN")
 ns.settings.showGuesses = true
 check(ns.db ~= nil and ns.realm ~= nil, "saved data initialised")
 
+-- Version: the number in the code and the one in the TOC agree, and a
+-- newer release is only announced when one is known of.
+do
+  local toc
+  for line in io.lines("CraftGraph.toc") do toc = toc or line:match("^## Version:%s*(%S+)") end
+  check(ns.VERSION == toc, "the version in Core.lua matches the TOC: " .. tostring(ns.VERSION) .. " and " .. tostring(toc))
+  check(ns.VersionLater("0.10", "0.9") and ns.VersionLater("1.0", "0.9.9") and ns.VersionLater("0.1.1", "0.1")
+    and not ns.VersionLater("0.1", "0.1") and not ns.VersionLater("0.1", "0.1.0") and not ns.VersionLater("0.9", "0.10"),
+    "versions are compared number by number")
+  check(ns.Latest == false and ns.NewerVersion() == nil, "nothing is known of a newer version until the outside tool says so")
+  ns.Latest = { version = "9.9", url = "https://example.invalid/r", checked = now - 3600 }
+  check(ns.NewerVersion() and ns.NewerVersion().version == "9.9", "a newer release is noticed")
+  SlashCmdList.CRAFTGRAPH("version")
+  ns.Latest = { version = ns.VERSION, checked = now - 3600 }
+  check(ns.NewerVersion() == nil, "the same version is not newer")
+  SlashCmdList.CRAFTGRAPH("version")
+  ns.Latest = false
+  SlashCmdList.CRAFTGRAPH("version")
+end
+
 local M, S, O, G = ns.Market, ns.Stats, ns.Opt, ns.Graph
 
 ------------------------------------------------------------------------------
@@ -1865,16 +1885,47 @@ do
       if fr.week and fr.chartMode then side = fr end
       if fr.plot and fr.clocks then chartFrame = fr end
     end
-    check(side.flow and side.flow:GetChecked() == false and (chartFrame.flowLines or 0) == 0, "supply and demand lines are off to start with")
+    check(side.flow and side.flow:GetChecked() == false and (chartFrame.flowLines or 0) == 0
+      and side.demand and side.demand:GetChecked() == false and (chartFrame.demandLines or 0) == 0,
+      "the supply and demand lines are off to start with")
     side.flow:SetChecked(true)
     side.flow.scripts.OnClick(side.flow)
     RunTimers()
-    check(ns.settings.chartFlow == true and chartFrame.flowLines >= 8, "ticking Supply draws them: " .. tostring(chartFrame.flowLines) .. " segments")
-    check(chartFrame.flowLabel.text:find("listed max", 1, true) ~= nil, "with their scales named: " .. chartFrame.flowLabel.text)
+    check(ns.settings.chartFlow == true and chartFrame.flowLines >= 8 and chartFrame.demandLines == 0,
+      "ticking Supply draws the listed line only: " .. tostring(chartFrame.flowLines) .. " segments")
+    check(chartFrame.flowLabel.text:find("listed, most", 1, true) ~= nil, "with its scale named: " .. chartFrame.flowLabel.text)
     side.flow:SetChecked(false)
     side.flow.scripts.OnClick(side.flow)
+    side.demand:SetChecked(true)
+    side.demand.scripts.OnClick(side.demand)
     RunTimers()
-    check(chartFrame.flowLines == 0 and chartFrame.flowLabel.text == "", "unticking removes them")
+    check(ns.settings.chartDemand == true and chartFrame.demandLines >= 3 and chartFrame.flowLines == 0,
+      "ticking Demand draws the sold-a-day line only: " .. tostring(chartFrame.demandLines) .. " segments")
+    local scale = chartFrame.demandScale
+    local digit = scale and scale / 10 ^ math.floor(math.log(scale) / math.log(10) + 1e-9)
+    check(scale and (near(digit, 1, 1e-6) or near(digit, 2, 1e-6) or near(digit, 5, 1e-6) or near(digit, 10, 1e-6)),
+      "its scale tops out at a round figure: " .. tostring(scale))
+    check(chartFrame.demandTop.text:find("/d", 1, true) ~= nil and chartFrame.demandMid.text:find("/d", 1, true) ~= nil,
+      "the scale is written in units a day: " .. chartFrame.demandTop.text .. " and " .. chartFrame.demandMid.text)
+    check(chartFrame.flowLabel.text:find("sold a day, now", 1, true) ~= nil, "and the label gives the rate now: " .. chartFrame.flowLabel.text)
+    -- An item with a believed rate but no rate history yet gets a level line; one with nothing says what it needs.
+    local keep = M.Get(id).sh
+    M.Get(id).sh = nil
+    ns.UI.Refresh() RunTimers()
+    check(chartFrame.demandLines == 1 and chartFrame.flowLabel.text:find("about", 1, true) ~= nil,
+      "with one figure so far the demand is a level line: " .. chartFrame.flowLabel.text)
+    local sa, sn, sb = M.Get(id).sa, M.Get(id).sn, M.Get(id).sb
+    M.Get(id).sa, M.Get(id).sn, M.Get(id).sb = nil, nil, nil
+    ns.generation = ns.generation + 1
+    ns.UI.Refresh() RunTimers()
+    check(chartFrame.demandLines == 0 and chartFrame.flowLabel.text:find("needs two full scans", 1, true) ~= nil,
+      "with no sales seen yet it says what it needs: " .. chartFrame.flowLabel.text)
+    M.Get(id).sh, M.Get(id).sa, M.Get(id).sn, M.Get(id).sb = keep, sa, sn, sb
+    ns.generation = ns.generation + 1
+    side.demand:SetChecked(false)
+    side.demand.scripts.OnClick(side.demand)
+    RunTimers()
+    check(chartFrame.demandLines == 0 and chartFrame.flowLabel.text == "" and chartFrame.demandTop.text == "", "unticking removes it")
   end
   -- A graph card says in short how many sell a day.
   do

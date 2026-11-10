@@ -62,6 +62,8 @@ function C.Create(parent)
   f.refLabel = Label("TOPRIGHT", -4, -3, "GameFontNormalSmall")
   f.vendorLabel = Label("BOTTOMRIGHT", -4, 3, "GameFontDisableSmall")
   f.flowLabel = Label("BOTTOM", 0, 3, "GameFontDisableSmall")
+  f.demandTop = Label("BOTTOMRIGHT", -4, 3, "GameFontDisableSmall")
+  f.demandMid = Label("BOTTOMRIGHT", -4, 3, "GameFontDisableSmall")
 
   f.xLeft = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   f.xLeft:SetPoint("BOTTOMLEFT", 2, 0)
@@ -420,48 +422,116 @@ function C.Update(f, id, opts)
   -- scans (green). They show whether a price move came with goods piling
   -- up or being bought out.
   f.flowLabel:SetText("")
-  f.flowLines = 0
-  if opts.flow then
+  f.demandTop:SetText("")
+  f.demandMid:SetText("")
+  f.flowLines, f.demandLines, f.demandScale = 0, 0, nil
+  if opts.flow or opts.demand then
     local record = ns.Market.Get(id)
-    local h = ns.Market.History(record)
-    local function Curve(points, r, g, b)
-      local top = 0
-      for i = 1, #points do
-        if (points[i][1] - entry.now) / 86400 >= t0 then top = max(top, points[i][2]) end
+    local parts = {}
+    local function N(x)
+      if x >= 1000 then return string.format("%.1fk", x / 1000) end
+      if x >= 10 then return tostring(ns.Round(x)) end
+      return (string.format("%.1f", x):gsub("%.0$", ""))
+    end
+    -- The next round figure at or above x: 1, 2 or 5 times a power of ten.
+    local function Nice(x)
+      local p = 10 ^ floor(math.log(x) / math.log(10))
+      for _, m in ipairs({ 1, 2, 5, 10 }) do
+        if m * p >= x then return m * p end
       end
-      if top <= 0 then return nil end
-      local lastX, lastY
+      return 10 * p
+    end
+    local function Height(value, top) return 4 + value / top * (H - 26) end
+    -- Draws points { time, value } against a scale from nothing to `top`.
+    local function Curve(points, top, r, g, b)
+      local drawn, lastX, lastY = 0, nil, nil
       for i = 1, #points do
         local day = (points[i][1] - entry.now) / 86400
         if day >= t0 then
-          local x, y = X(day), 4 + points[i][2] / top * (H - 26)
+          local x, y = X(day), Height(points[i][2], top)
           if lastX and x - lastX >= 1 then
-            Line(lastX, lastY, x, y, r, g, b, 0.7, 1)
-            f.flowLines = f.flowLines + 1
+            Line(lastX, lastY, x, y, r, g, b, 0.75, 1.1)
+            drawn = drawn + 1
           end
           if not lastX or x - lastX >= 1 then lastX, lastY = x, y end
         end
       end
+      return drawn
+    end
+    local function Top(points)
+      local top = 0
+      for i = 1, #points do
+        if (points[i][1] - entry.now) / 86400 >= t0 then top = max(top, points[i][2]) end
+      end
       return top
     end
-    local listed, soldPoints = {}, {}
-    for i = 1, #h, 4 do listed[#listed + 1] = { h[i], h[i + 3] } end
-    local sh = record and ns.Market.Source("Sales") and record.sh or {}
-    for i = 1, #sh, 2 do soldPoints[#soldPoints + 1] = { sh[i], sh[i + 1] } end
-    -- The selling rate of a single gap is a few sales over a short time
-    -- and jumps about; the line is its running average over five gaps.
-    local smooth = {}
-    for i = 1, #soldPoints do
-      local sum, count = 0, 0
-      for j = max(1, i - 4), i do sum, count = sum + soldPoints[j][2], count + 1 end
-      smooth[i] = { soldPoints[i][1], sum / count }
+
+    -- Supply: units listed at each scan (blue).
+    if opts.flow then
+      local h = ns.Market.History(record)
+      local listed = {}
+      for i = 1, #h, 4 do listed[#listed + 1] = { h[i], h[i + 3] } end
+      local top = Top(listed)
+      if top > 0 then
+        f.flowLines = Curve(listed, top, 0.45, 0.75, 1)
+        parts[#parts + 1] = "|cff73bffflisted, most " .. N(top) .. "|r"
+      end
     end
-    local topListed = Curve(listed, 0.45, 0.75, 1)
-    local topSold = Curve(smooth, 0.4, 1, 0.4)
-    local function N(x) return x >= 1000 and string.format("%.1fk", x / 1000) or tostring(ns.Round(x)) end
-    local parts = {}
-    if topListed then parts[#parts + 1] = "|cff73bffflisted max " .. N(topListed) .. "|r" end
-    if topSold then parts[#parts + 1] = "|cff66ff66sold max " .. N(topSold) .. "/d|r" end
+
+    -- Demand: units sold a day (green), with its own scale at the right
+    -- edge in units a day. One gap between two full scans holds only a few
+    -- sales, so its rate jumps about; what is drawn is everything sold over
+    -- a stretch of time divided by that time, which is the rate itself and
+    -- is steady enough to read.
+    if opts.demand then
+      local sh = record and ns.Market.Source("Sales") and record.sh or {}
+      local window = max(0.25, (t1 - t0) / 14) * 86400
+      local times, units, spans = {}, {}, {}
+      for i = 1, #sh, 2 do
+        local n = #times + 1
+        local gap = n > 1 and min(sh[i] - times[n - 1], 12 * 3600) or 3600
+        times[n], spans[n], units[n] = sh[i], gap, sh[i + 1] * gap
+      end
+      local smooth, from, sumUnits, sumSpan = {}, 1, 0, 0
+      for i = 1, #times do
+        sumUnits, sumSpan = sumUnits + units[i], sumSpan + spans[i]
+        while times[from] < times[i] - window do
+          sumUnits, sumSpan = sumUnits - units[from], sumSpan - spans[from]
+          from = from + 1
+        end
+        smooth[i] = { times[i], sumSpan > 0 and sumUnits / sumSpan or 0 }
+      end
+      local sales = ns.Market.Sales(id)
+      local top = Top(smooth)
+      local green = { 0.4, 1, 0.4 }
+      if #smooth >= 2 and top > 0 then
+        top = Nice(top)
+        f.demandLines = Curve(smooth, top, green[1], green[2], green[3])
+        parts[#parts + 1] = "|cff66ff66sold a day, now " .. N(smooth[#smooth][2]) .. "|r"
+      elseif sales then
+        -- One figure so far: a level line at the believed rate.
+        top = Nice(max(sales.rate, 0.1) * 1.5)
+        local y = Height(sales.rate, top)
+        Line(X(known), y, X(0), y, green[1], green[2], green[3], 0.75, 1.1)
+        f.demandLines = 1
+        parts[#parts + 1] = "|cff66ff66sold a day, about " .. N(sales.rate) .. (sales.floor and "+" or "") .. "|r"
+      else
+        top = nil
+        parts[#parts + 1] = "|cffff8c33demand: needs two full scans within 12 h|r"
+      end
+      if top then
+        -- The scale: a faint line and a figure at the top and at half.
+        f.demandScale = top
+        -- The top figure sits under its line, clear of the label in the corner.
+        for _, mark in ipairs({ { f.demandTop, top, -7 }, { f.demandMid, top / 2, 6 } }) do
+          local y = Height(mark[2], top)
+          Line(0, y, W, y, green[1], green[2], green[3], 0.13, 1)
+          mark[1]:ClearAllPoints()
+          mark[1]:SetPoint("RIGHT", plot, "BOTTOMRIGHT", -4, y + mark[3])
+          mark[1]:SetText("|cff66ff66" .. N(mark[2]) .. "/d|r")
+        end
+      end
+    end
     f.flowLabel:SetText(table.concat(parts, "  "))
   end
 

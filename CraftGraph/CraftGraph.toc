@@ -9,6 +9,7 @@
 
 Data\Recipes.lua
 Data\Online.lua
+Data\Latest.lua
 Core.lua
 Market.lua
 Stats.lua

@@ -33,6 +33,20 @@ try {
         if ($line -match "^## Version:\s*(.+)$") { $version = $Matches[1].Trim() }
     }
 
+    # Is there a newer release than the one in this folder? Only asks GitHub
+    # for the latest version number; skipped quietly without a connection.
+    try {
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/t-more/craftgraph/releases/latest" `
+            -Headers @{ "User-Agent" = "craftgraph-installer" } -TimeoutSec 8
+        $latest = "$($release.tag_name)".TrimStart("v", "V")
+        if ([version]$latest -gt [version]$version) {
+            Say "A newer version is out: $latest (this folder holds $version)." "Yellow"
+            Say "Get it here: https://github.com/t-more/craftgraph/releases/latest"
+            Say "Carrying on with $version."
+            Say ""
+        }
+    } catch { }
+
     # Where the game might be: what was given, what the game wrote in the
     # registry, and the usual folders on every drive.
     $candidates = New-Object System.Collections.Generic.List[string]

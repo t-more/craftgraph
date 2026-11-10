@@ -19,7 +19,8 @@ day with a range. Old evidence fades, because demand on a young server does not 
 ## Where you see it
 - on graph cards as `120/d`;
 - in the side panel ("sells about 120 a day") and in Trends, with the sellers whose auctions sold;
-- as the green line on the price chart when **Supply** is ticked;
+- as the green line on the price chart when **Demand** is ticked, evened out over a stretch of
+  time, with its scale in units a day;
 - in batch sizes: the addon will not suggest making more than the market takes.
 
 ![Supply and demand on the chart](../media/supply-demand.png)

@@ -648,6 +648,8 @@ def load_saved():
 
 def cmd_run(args):
     cfg = load_config()
+    if not args.fixture:
+        say_if_newer(note_latest())
     api = Api(cfg, args.fixture)
     api.login()
     saved = load_saved()
@@ -826,6 +828,7 @@ def import_all(db, verbose=True):
 def cmd_archive(args):
     """Needs no Blizzard account: it only reads the addon's saved file."""
     db = open_db()
+    say_if_newer(note_latest())
     files, _ = import_all(db)
     if not files:
         print("Nothing new: every saved file is already in the database.")
@@ -868,6 +871,73 @@ def cmd_remove_watch(args):
             file.unlink()
     os.system("systemctl --user daemon-reload")
     print("Removed.")
+
+
+# ----------------------------------------------------------------------------
+# Is there a newer version of the addon?
+# ----------------------------------------------------------------------------
+REPOSITORY = "t-more/craftgraph"
+RELEASES_URL = "https://github.com/%s/releases/latest" % REPOSITORY
+CHECK_EVERY = 20 * 3600
+
+
+def version_tuple(text):
+    return tuple(int(n) for n in re.findall(r"\d+", str(text)))
+
+
+def addon_version():
+    for line in (ADDON_DIR / "CraftGraph.toc").read_text(encoding="utf-8").splitlines():
+        if line.startswith("## Version:"):
+            return line.split(":", 1)[1].strip()
+    return "0"
+
+
+def note_latest(force=False):
+    """Asks GitHub for the newest release (no account needed) and writes it
+    to Data/Latest.lua for the addon. At most once in twenty hours unless
+    forced. Returns (version, url) or None if it could not be found out."""
+    stamp = DATA_DIR / "latest.json"
+    try:
+        if not force and stamp.exists():
+            seen = json.loads(stamp.read_text())
+            if time.time() - seen.get("checked", 0) < CHECK_EVERY:
+                return seen.get("version"), seen.get("url")
+        request = urllib.request.Request(
+            "https://api.github.com/repos/%s/releases/latest" % REPOSITORY,
+            headers={"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"})
+        release = json.loads(urllib.request.urlopen(request, timeout=10).read())
+        version = str(release.get("tag_name", "")).lstrip("vV")
+        url = release.get("html_url") or RELEASES_URL
+        if not version_tuple(version):
+            return None
+        now = int(time.time())
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(json.dumps({"version": version, "url": url, "checked": now}))
+        (ADDON_DIR / "Data" / "Latest.lua").write_text(
+            "-- Written by sync/craftgraph_sync.py: the newest release when last looked up.\n"
+            "local _, ns = ...\n"
+            "ns.Latest = { version = %s, url = %s, checked = %d }\n" % (json.dumps(version), json.dumps(url), now),
+            encoding="utf-8")
+        return version, url
+    except Exception:
+        return None
+
+
+def say_if_newer(latest):
+    if latest and version_tuple(latest[0]) > version_tuple(addon_version()):
+        print("A newer CraftGraph is out: %s (you have %s). %s" % (latest[0], addon_version(), latest[1]))
+        return True
+    return False
+
+
+def cmd_check_update(args):
+    latest = note_latest(force=True)
+    if not latest:
+        print("Could not reach GitHub to look for a newer version. See %s" % RELEASES_URL)
+    elif not say_if_newer(latest):
+        print("You have the newest version (%s)." % addon_version())
+    if latest:
+        print("The game shows this at your next login or /reload.")
 
 
 def cmd_status(args):
@@ -924,12 +994,13 @@ def main():
     parser = argparse.ArgumentParser(description="Bring Blizzard's hourly auction data into CraftGraph.")
     parser.add_argument("command", nargs="?", default="run",
                         choices=["setup", "run", "archive", "houses", "status", "install-timer", "remove-timer",
-                                 "install-watch", "remove-watch"])
+                                 "install-watch", "remove-watch", "check-update"])
     parser.add_argument("--fixture", help=argparse.SUPPRESS)      # read saved API answers (for tests)
     args = parser.parse_args()
     {"setup": cmd_setup, "run": cmd_run, "archive": cmd_archive, "houses": cmd_houses, "status": cmd_status,
      "install-timer": cmd_install_timer, "remove-timer": cmd_remove_timer,
-     "install-watch": cmd_install_watch, "remove-watch": cmd_remove_watch}[args.command](args)
+     "install-watch": cmd_install_watch, "remove-watch": cmd_remove_watch,
+     "check-update": cmd_check_update}[args.command](args)
 
 
 if __name__ == "__main__":

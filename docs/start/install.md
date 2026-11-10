@@ -18,6 +18,13 @@ install by hand.
 2. Copy the `CraftGraph` folder into `World of Warcraft/_forever_/Interface/AddOns/`.
 3. Start the game and tick CraftGraph under AddOns on the character screen.
 
+## Updates
+Type `/cg version` to see which version you have. The game cannot look for updates by itself:
+the Windows installer says when a newer one exists, and so does the optional Python tool
+(`check-update`), after which the addon tells you at login. New versions and what changed in
+each are on the [releases page](https://github.com/t-more/craftgraph/releases); the notes are
+also in [`release-notes/`](../../release-notes/README.md).
+
 ## Optional extras
 Installing Python 3 adds two things the game itself cannot do: prices while you are away (from
 Blizzard's hourly data) and a database of every scan. Neither is needed. See

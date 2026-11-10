@@ -128,7 +128,8 @@ local DEFAULTS = {
   cut = 0.05,         -- auction house cut on a sale
   horizonDays = 2,    -- how long a batch may take to sell
   chartDays = 14,     -- how far back the price chart looks; 0 = everything
-  chartFlow = false,  -- draw supply (units listed) and demand (sold a day) on the price chart
+  chartFlow = false,  -- draw supply (units listed) on the price chart
+  chartDemand = false, -- draw demand (units sold a day) on the price chart
   showGuesses = false, -- show forecasts and patterns even where they are only guesses
   srcOnline = true,   -- use Blizzard's hourly data when the sync tool has brought it in
   srcAuctionator = true, -- use Auctionator's prices and history where we have none
@@ -176,7 +177,45 @@ ns.On("PLAYER_LOGIN", function()
   if not ns.db then return end
   InitRealm()
   ns.Fire("LOGIN")
+  -- Say once, a little after logging in, if a newer version is known of.
+  C_Timer.After(8, function()
+    local newer = ns.NewerVersion()
+    if newer then
+      ns.Print("version " .. newer.version .. " is out (you have " .. ns.VERSION .. "): "
+        .. (newer.url or "https://github.com/t-more/craftgraph/releases/latest"))
+    end
+  end)
 end)
+
+------------------------------------------------------------------------------
+-- Version. The number below and "## Version" in CraftGraph.toc must agree
+-- (the offline checks compare them). An addon cannot look anything up
+-- online, so whether a newer version exists is only known when something
+-- outside the game has written Data/Latest.lua: the optional sync tool does.
+------------------------------------------------------------------------------
+ns.VERSION = "0.1"
+ns.RELEASES = "https://github.com/t-more/craftgraph/releases/latest"
+
+-- Is version a later than version b? Compared number by number: 0.10 > 0.9.
+function ns.VersionLater(a, b)
+  local pa, pb = {}, {}
+  for n in tostring(a):gmatch("%d+") do pa[#pa + 1] = tonumber(n) end
+  for n in tostring(b):gmatch("%d+") do pb[#pb + 1] = tonumber(n) end
+  for i = 1, math.max(#pa, #pb) do
+    local x, y = pa[i] or 0, pb[i] or 0
+    if x ~= y then return x > y end
+  end
+  return false
+end
+
+-- The newer version known of, { version, url, checked }, or nil.
+function ns.NewerVersion()
+  local latest = ns.Latest
+  if type(latest) == "table" and latest.version and ns.VersionLater(latest.version, ns.VERSION) then
+    return latest
+  end
+  return nil
+end
 
 ------------------------------------------------------------------------------
 -- Item helpers. Static data comes from Data/Recipes.lua; the game is asked
@@ -304,6 +343,19 @@ SLASH_CRAFTGRAPH1 = "/cg"
 SLASH_CRAFTGRAPH2 = "/craftgraph"
 SlashCmdList["CRAFTGRAPH"] = function(msg)
   msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if msg == "version" or msg == "v" then
+    ns.Print("version " .. ns.VERSION .. ".")
+    local newer = ns.NewerVersion()
+    if newer then
+      ns.Print("version " .. newer.version .. " is out: " .. (newer.url or ns.RELEASES))
+    elseif type(ns.Latest) == "table" and ns.Latest.checked then
+      ns.Print("that was the newest when last checked, " .. ns.Age(time() - ns.Latest.checked) .. ".")
+    else
+      ns.Print("the game cannot look for updates by itself. See " .. ns.RELEASES
+        .. " or run the optional sync tool with check-update.")
+    end
+    return
+  end
   if msg == "log" then
     local log = ns.db and ns.db.log or {}
     for i = math.max(1, #log - 15), #log do ns.Print(log[i]) end

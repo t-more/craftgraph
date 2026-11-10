@@ -11,8 +11,8 @@ The box in the side panel has three pictures. Its heading button switches betwee
 ![The three pictures](../media/pictures.gif)
 
 1. **Price history**: the price over time. The glow is how sure the estimate is; suns and moons
-   under it show the time of day. Tick **Supply** to add how many were listed (blue) and how many
-   sold a day (green).
+   under it show the time of day. Tick **Supply** to add how many were listed (blue) and
+   **Demand** to add how many sold a day (green, with its scale in units a day at the right).
 2. **Week pattern**: every recent scan placed on its hour of the week, moved to today's price
    level. Gold is the usual curve; blue is where the coming week is heading.
 3. **Day pattern**: the same, folded onto one day.

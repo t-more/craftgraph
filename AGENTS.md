@@ -46,6 +46,15 @@ the human judge the effort. Friends get it as a zip, so it must work from the zi
 - Pictures are drawn from the real interface code on simulated data (`tools/render/`), and say so.
 - Docs: `README.md` sells it in simple words; `docs/` goes deeper level by level.
 
+## Versions and release notes
+- The version is hardcoded: `ns.VERSION` in `Core.lua`, matched by the TOC and the readme. A
+  GitHub release tagged `v<version>` carries the zip.
+- The game cannot reach the internet. A newer version is noticed by the installer and by the
+  optional sync tool, which tells the addon; never promise an in-game check without them.
+- `release-notes/` has one file per released version. While working, note what was done in
+  `release-notes/unreleased.md`. Write a version's notes only when the version is actually
+  bumped, from those notes. The steps are in `release-notes/README.md`.
+
 ## Where to look
 | For | Look at |
 |---|---|

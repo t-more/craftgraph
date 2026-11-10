@@ -62,7 +62,9 @@ Reading the graph
   lines between cards are gold where making the next thing earns money,
   grey around nothing and red towards a loss.
   On the price chart, tick "Supply" to add how many were listed at each scan
-  (blue) and how many sold a day (green).
+  (blue) and "Demand" to add how many sold a day (green, with its scale in
+  units a day at the right edge). "Glow" is the certainty shading.
+  /cg version shows which version you have.
 
 How fast things sell
   Each full scan lists every auction with its seller and a rough time left.

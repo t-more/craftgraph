@@ -25,6 +25,10 @@ day with a range. Old evidence fades, because demand on a young server does not 
 
 ![Supply and demand on the chart](../media/supply-demand.png)
 
+In this simulated example the blue line (units listed) triples while the price sinks: goods
+piling up. Later the green line (units sold a day) doubles, the blue line drains and the price
+jumps: real demand. Reading the three together tells you which kind of move you are looking at.
+
 ## Its limits
 It needs two full scans within twelve hours. Auctions posted *and* sold between two scans are
 never seen, so for a busy item scanned hours apart the figure is too low; then it reads "at

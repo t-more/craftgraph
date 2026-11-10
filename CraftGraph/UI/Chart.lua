@@ -81,6 +81,35 @@ function C.Create(parent)
   f.empty:SetWidth(240)
   f.empty:SetText("No price history yet.\nScan this item at the auction house.")
 
+  -- The smoothing period: click to step through. Every line drawn from
+  -- scans (supply, demand, and the average of scanned prices) is evened out
+  -- over this long.
+  f.smooth = CreateFrame("Button", nil, f)
+  f.smooth:SetSize(92, 14)
+  f.smooth:SetPoint("BOTTOMLEFT", 84, 0)
+  f.smoothText = f.smooth:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  f.smoothText:SetPoint("LEFT")
+  f.smooth:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  f.smooth:SetScript("OnClick", function(_, button)
+    local current, index = ns.settings.chartSmooth or 0, 1
+    for i, minutes in ipairs(C.SMOOTH_STEPS) do
+      if minutes == current then index = i end
+    end
+    index = (index - 1 + (button == "RightButton" and -1 or 1)) % #C.SMOOTH_STEPS + 1
+    ns.settings.chartSmooth = C.SMOOTH_STEPS[index]
+    if ns.UI and ns.UI.Refresh then ns.UI.Refresh() end
+  end)
+  f.smooth:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText("Smoothing period")
+    GameTooltip:AddLine("How long the chart's lines are averaged over: the supply and demand lines, "
+      .. "and a thin white line through the scanned prices. \"auto\" lets the chart choose from the "
+      .. "range shown and leaves the supply line as scanned. Click for longer, right-click for shorter.",
+      1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  f.smooth:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
   f.Update = C.Update
   return f
 end
@@ -91,6 +120,39 @@ local function MakeBand(plot)
     t:SetColorTexture(1, 1, 1, 1)
     return t
   end
+end
+
+-- Smoothing periods offered, in minutes; 0 lets the chart choose.
+C.SMOOTH_STEPS = { 0, 15, 30, 60, 180, 360, 720, 1440 }
+
+function C.SmoothText(minutes)
+  if not minutes or minutes <= 0 then return "smooth: auto" end
+  if minutes < 60 then return "smooth: " .. minutes .. " min" end
+  if minutes < 1440 then return "smooth: " .. (minutes / 60) .. " h" end
+  return "smooth: " .. (minutes / 1440) .. (minutes == 1440 and " day" or " days")
+end
+
+-- Averages points { time, value } over a window centred on each point.
+-- weights: optional, one per point (for rates: the time each one covers).
+function C.Smooth(points, seconds, weights)
+  local out, n = {}, #points
+  local half = seconds / 2
+  local lo, hi, sum, sumW = 1, 0, 0, 0
+  for i = 1, n do
+    local t = points[i][1]
+    while hi < n and points[hi + 1][1] <= t + half do
+      hi = hi + 1
+      local w = weights and weights[hi] or 1
+      sum, sumW = sum + points[hi][2] * w, sumW + w
+    end
+    while points[lo][1] < t - half do
+      local w = weights and weights[lo] or 1
+      sum, sumW = sum - points[lo][2] * w, sumW - w
+      lo = lo + 1
+    end
+    out[i] = { t, sumW > 0 and sum / sumW or points[i][2] }
+  end
+  return out
 end
 
 local function MakeNight(plot)
@@ -255,6 +317,7 @@ function C.Update(f, id, opts)
     f.note:SetText("")
     f.xNow:Hide()
     f.xRight:Hide()
+    f.smooth:Hide()
     HideFrom(f.nights, 1)
     HideFrom(f.clocks, 1)
     HideFrom(f.clockLabels, 1)
@@ -421,6 +484,27 @@ function C.Update(f, id, opts)
   -- units listed at each scan (blue) and units sold a day between full
   -- scans (green). They show whether a price move came with goods piling
   -- up or being bought out.
+  -- The smoothing period, and the scanned prices averaged over it.
+  local smoothMinutes = ns.settings and ns.settings.chartSmooth or 0
+  f.smooth:Show()
+  f.smoothText:SetText(C.SmoothText(smoothMinutes))
+  f.smoothMinutes, f.averageLines = smoothMinutes, 0
+  if smoothMinutes > 0 and #series >= 3 then
+    local average = C.Smooth(series, smoothMinutes * 60)
+    local lastX, lastY
+    for i = 1, #average do
+      local day = (average[i][1] - entry.now) / 86400
+      if day >= t0 then
+        local x, y = X(day), Clamp(Y(average[i][2]))
+        if lastX and x - lastX >= 1 then
+          Line(lastX, lastY, x, y, 1, 1, 1, 0.55, 1)
+          f.averageLines = f.averageLines + 1
+        end
+        if not lastX or x - lastX >= 1 then lastX, lastY = x, y end
+      end
+    end
+  end
+
   f.flowLabel:SetText("")
   f.demandTop:SetText("")
   f.demandMid:SetText("")
@@ -429,7 +513,7 @@ function C.Update(f, id, opts)
     local record = ns.Market.Get(id)
     local parts = {}
     local function N(x)
-      if x >= 1000 then return string.format("%.1fk", x / 1000) end
+      if x >= 1000 then return (string.format("%.1fk", x / 1000):gsub("%.0k$", "k")) end
       if x >= 10 then return tostring(ns.Round(x)) end
       return (string.format("%.1f", x):gsub("%.0$", ""))
     end
@@ -471,6 +555,7 @@ function C.Update(f, id, opts)
       local h = ns.Market.History(record)
       local listed = {}
       for i = 1, #h, 4 do listed[#listed + 1] = { h[i], h[i + 3] } end
+      if smoothMinutes > 0 then listed = C.Smooth(listed, smoothMinutes * 60) end
       local top = Top(listed)
       if top > 0 then
         f.flowLines = Curve(listed, top, 0.45, 0.75, 1)
@@ -485,22 +570,18 @@ function C.Update(f, id, opts)
     -- is steady enough to read.
     if opts.demand then
       local sh = record and ns.Market.Source("Sales") and record.sh or {}
-      local window = max(0.25, (t1 - t0) / 14) * 86400
-      local times, units, spans = {}, {}, {}
+      -- Left to itself the chart evens the rate out over a fourteenth of
+      -- the range shown, and never under six hours.
+      local window = smoothMinutes > 0 and smoothMinutes * 60 or max(0.25, (t1 - t0) / 14) * 86400
+      local rates, spans = {}, {}
       for i = 1, #sh, 2 do
-        local n = #times + 1
-        local gap = n > 1 and min(sh[i] - times[n - 1], 12 * 3600) or 3600
-        times[n], spans[n], units[n] = sh[i], gap, sh[i + 1] * gap
+        local n = #rates + 1
+        spans[n] = n > 1 and min(sh[i] - rates[n - 1][1], 12 * 3600) or 3600
+        rates[n] = { sh[i], sh[i + 1] }
       end
-      local smooth, from, sumUnits, sumSpan = {}, 1, 0, 0
-      for i = 1, #times do
-        sumUnits, sumSpan = sumUnits + units[i], sumSpan + spans[i]
-        while times[from] < times[i] - window do
-          sumUnits, sumSpan = sumUnits - units[from], sumSpan - spans[from]
-          from = from + 1
-        end
-        smooth[i] = { times[i], sumSpan > 0 and sumUnits / sumSpan or 0 }
-      end
+      -- Weighted by the time each rate covers: units sold over the window
+      -- divided by the window's length.
+      local smooth = C.Smooth(rates, window, spans)
       -- The figure written under the chart is the one the item's card and
       -- the side panel show, so that they never disagree; the line is how
       -- the rate has moved.

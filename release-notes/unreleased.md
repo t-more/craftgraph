@@ -29,3 +29,7 @@ when the version is bumped; see [README.md](README.md).
   day instead of ten.
 - Reading a full scan adapts to the frame rate, so it no longer takes minutes with the game in
   the background.
+- Price chart: a smoothing period under the chart (click to step through auto, 15 min, 30 min,
+  1 h, 3 h, 6 h, 12 h, 1 day; right-click goes back). It evens out the supply and demand lines
+  and adds a thin white average through the scanned prices.
+- Pictures: a supply and demand story in the simulated market, and a GIF of the smoothing.

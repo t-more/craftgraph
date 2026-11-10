@@ -64,6 +64,8 @@ Reading the graph
   On the price chart, tick "Supply" to add how many were listed at each scan
   (blue) and "Demand" to add how many sold a day (green, with its scale in
   units a day at the right edge). "Glow" is the certainty shading.
+  Click "smooth" under the chart to choose how long those lines are averaged
+  over, from 15 minutes to a day; "auto" lets the chart choose.
   /cg version shows which version you have.
 
 How fast things sell

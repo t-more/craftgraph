@@ -102,6 +102,21 @@ for _, id in ipairs(ids) do
   }
 end
 
+-- One item tells a story, to show supply and demand at work: a quiet
+-- week, then goods flood in and the price sinks, the flood dries up, a
+-- weekend rush buys the market nearly empty and the price jumps, and
+-- things settle again. Returns price, stock (both as multiples) and units
+-- sold a day at a moment `d` days into the three weeks.
+local function Story(d)
+  local function ramp(a, b, from, to) return a + (b - a) * math.max(0, math.min(1, (d - from) / (to - from))) end
+  if d < 7 then return 1, 1, 300 end
+  if d < 11 then return ramp(1, 0.68, 7, 10), ramp(1, 3.1, 7, 9.5), ramp(300, 390, 7, 10) end
+  if d < 14 then return ramp(0.68, 0.9, 11, 14), ramp(3.1, 0.9, 11, 13.5), ramp(390, 330, 11, 14) end
+  if d < 18 then return ramp(0.9, 1.38, 14, 16.5), ramp(0.9, 0.35, 14, 16), ramp(330, 720, 14, 15.5) end
+  return ramp(1.38, 1.15, 18, 21), ramp(0.35, 0.95, 18, 20.5), ramp(720, 320, 18, 20)
+end
+local STORY_ITEM = 2840          -- Copper Bar
+
 local SELLERS = { "Anwen", "Borin", "Cass", "Dunmar", "Elsie", "Fenna", "Garrick", "Hilde", "Ivo", "Jessa" }
 
 -- The price of an item at a moment, and a ladder of listings around it.
@@ -111,9 +126,18 @@ local function Ladder(id, t, tr)
   local season = tr.evening * math.cos((hour - 20) / 24 * 2 * math.pi)
     + ((tm.wday == 1 or tm.wday == 7) and tr.weekend or -tr.weekend * 0.4)
   local price = base[id] * math.exp(tr.level + season + 0.012 * gauss())
+  local storyStock
+  if id == STORY_ITEM then
+    local p, stock = Story(DAYS - (END - t) / 86400)
+    price = base[id] * p * math.exp(season * 0.5 + 0.012 * gauss())
+    storyStock = stock
+  end
   -- How much is listed drifts slowly, and is fuller in the evening.
   tr.stock = tr.stock * 0.97 + 0.07 * gauss()
   local amount = tr.depth * math.exp(tr.stock + 0.25 * math.cos((hour - 21) / 24 * 2 * math.pi))
+  if storyStock then
+    amount = 420 * storyStock * math.exp(0.12 * math.cos((hour - 21) / 24 * 2 * math.pi) + 0.05 * gauss())
+  end
   local raw, p = {}, price
   local levels = 3 + id % 4
   for i = 1, levels do
@@ -155,8 +179,22 @@ for step = DAYS * 24, 0, -1 do
           left = left - n
         end
       end
-      M.TrackSales(id, auctions, t)
+      if id ~= STORY_ITEM then M.TrackSales(id, auctions, t) end
       M.Record(id, raw, { full = true, t = t, perAuction = false })
+      if id == STORY_ITEM then
+        -- Its sales are written straight from the story: busier in the evening.
+        local rec = ns.realm.items[id]
+        local _, _, demand = Story(DAYS - (END - t) / 86400)
+        local rate = demand * math.exp(0.3 * math.cos((hour - 20) / 24 * 2 * math.pi) + 0.25 * gauss())
+        local gap = rec.storyLast and math.min((t - rec.storyLast) / 86400, 0.5) or 1 / 24
+        rec.storyLast = t
+        rec.sh = rec.sh or {}
+        rec.sh[#rec.sh + 1], rec.sh[#rec.sh + 2] = t, math.floor(rate + 0.5)
+        local fade = 0.5 ^ (gap / 7)
+        rec.sa = (rec.sa or 0) * fade + rate * gap
+        rec.sc = (rec.sc or 0) * fade + rate * gap / 20
+        rec.sb = (rec.sb or 0) * fade + gap
+      end
     end
   end
 end

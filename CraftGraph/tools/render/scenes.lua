@@ -70,10 +70,30 @@ tour("Price history with the certainty drawn as a glow, and suns and moons for t
 ns.settings.chartFlow, ns.settings.chartDemand = true, true
 ns.UI.Refresh() settle()
 frame("pictures", { view = boxView(true), zoom = 2, caption = "Tick Supply and Demand: units listed (blue), sold a day (green)", captionScale = 1.1 }, 2.4)
-still("supply-demand", { view = boxView(), zoom = 2 })
-tour("Tick Supply and Demand to see how much was listed and how much sold, beside the price", 4)
 ns.settings.chartFlow, ns.settings.chartDemand = false, false
 ns.UI.Refresh() settle()
+
+-- Supply and demand telling a story: three weeks of Copper Bar.
+ns.UI.Focus(World.item("Copper Bar")) settle()
+ns.settings.chartDays = 0
+side.range:SetText("All")
+ns.settings.chartFlow, ns.settings.chartDemand, ns.settings.chartSmooth = true, true, 360
+ns.UI.Refresh() settle()
+still("supply-demand", { view = boxView(), zoom = 2 })
+tour("Supply (blue) floods in and the price sinks; demand (green) surges and it jumps", 5)
+local chartFrame = find(function(f) return f.plot and f.clocks and f.smooth end)
+for _, step in ipairs({ { 0, "Left to itself the chart picks the smoothing" }, { 60, "Smoothed over an hour: every wiggle" },
+    { 360, "Over six hours: the days show" }, { 1440, "Over a day: the story" } }) do
+  ns.settings.chartSmooth = step[1]
+  ns.UI.Refresh() settle()
+  wow.point(chartFrame.smooth, 0.4, 0.5)
+  frame("smoothing", { view = boxView(true), zoom = 2, caption = step[2], captionScale = 1.1 }, 2.2)
+end
+calm()
+ns.settings.chartDays, ns.settings.chartSmooth = 14, 0
+side.range:SetText("14 days")
+ns.settings.chartFlow, ns.settings.chartDemand = false, false
+ns.UI.Focus(hero) settle()
 ns.settings.sideChart = "week" ns.UI.Refresh() settle()
 side.week.Select(14)
 frame("pictures", { view = boxView(true), zoom = 2, caption = "Every scan folded onto one week", captionScale = 1.1 }, 2.4)

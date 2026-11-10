@@ -24,6 +24,12 @@ sure that is.
 
 ![Dragging across the week](docs/media/week.gif)
 
+**See why a price moved.** Tick Supply and Demand on the price chart. Here goods flood in (blue)
+and the price sinks; then a rush of buyers (green) empties the market and it jumps. Pick how much
+to smooth: an hour shows every wiggle, a day shows the story.
+
+![Supply and demand beside the price](docs/media/smoothing.gif)
+
 **Make a plan and watch it.** Press "Plan it" and a small window tells you the next step wherever
 you are. After every scan it shows what the plan should earn now, and whether that went up or down.
 

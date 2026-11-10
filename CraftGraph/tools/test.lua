@@ -1929,6 +1929,29 @@ do
       "with no sales seen yet it says what it needs: " .. chartFrame.flowLabel.text)
     M.Get(id).sh, M.Get(id).sa, M.Get(id).sn, M.Get(id).sb = keep, sa, sn, sb
     ns.generation = ns.generation + 1
+    -- The smoothing period: click to step through; every scanned line follows it.
+    do
+      local C = ns.Chart
+      check(chartFrame.smoothText.text == "smooth: auto" and chartFrame.averageLines == 0, "the chart starts on its own choice of smoothing")
+      local flat = C.Smooth({ { 0, 10 }, { 600, 20 }, { 1200, 30 }, { 100000, 99 } }, 1500)
+      check(near(flat[2][2], 20) and near(flat[1][2], 15) and flat[4][2] == 99, "a point is averaged with those within half the period either side")
+      local weighted = C.Smooth({ { 0, 0 }, { 600, 100 } }, 3000, { 3, 1 })
+      check(near(weighted[1][2], 25), "weights are honoured: " .. tostring(weighted[1][2]))
+      local raw = chartFrame.demandScale
+      chartFrame.smooth.scripts.OnClick(chartFrame.smooth, "LeftButton") RunTimers()
+      check(ns.settings.chartSmooth == 15 and chartFrame.smoothText.text == "smooth: 15 min", "a click moves to 15 minutes: " .. chartFrame.smoothText.text)
+      check(chartFrame.averageLines >= 3, "the scanned prices get an average line: " .. chartFrame.averageLines)
+      for _ = 1, 2 do chartFrame.smooth.scripts.OnClick(chartFrame.smooth, "LeftButton") end
+      RunTimers()
+      check(ns.settings.chartSmooth == 60 and chartFrame.smoothText.text == "smooth: 1 h" and chartFrame.demandLines >= 3, "then 30 minutes, then an hour")
+      chartFrame.smooth.scripts.OnClick(chartFrame.smooth, "RightButton") RunTimers()
+      check(ns.settings.chartSmooth == 30, "a right-click goes back")
+      for _ = 1, 6 do chartFrame.smooth.scripts.OnClick(chartFrame.smooth, "LeftButton") end
+      RunTimers()
+      check(ns.settings.chartSmooth == 0 and chartFrame.averageLines == 0 and chartFrame.smoothText.text == "smooth: auto",
+        "past a day it wraps round to auto: " .. chartFrame.smoothText.text)
+      chartFrame.smooth.scripts.OnEnter(chartFrame.smooth) chartFrame.smooth.scripts.OnLeave(chartFrame.smooth)
+    end
     side.demand:SetChecked(false)
     side.demand.scripts.OnClick(side.demand)
     RunTimers()

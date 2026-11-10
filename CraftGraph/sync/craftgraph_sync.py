@@ -874,6 +874,57 @@ def cmd_remove_watch(args):
 
 
 # ----------------------------------------------------------------------------
+# Sharing prices as files (.cg.json)
+# ----------------------------------------------------------------------------
+SHARE_FORMAT = "craftgraph-prices"
+
+
+def cmd_share_export(args):
+    """Writes the prices of your scans from the last day to a .cg.json file
+    that another player can import. The same JSON the game's Export makes."""
+    saved = load_saved()
+    best_realm, items = None, {}
+    now = int(time.time())
+    for realm, data in (saved.get("realms") or {}).items():
+        found = {}
+        for item, rec in (data.get("items") or {}).items():
+            ladder = lua_array(rec.get("l")) if isinstance(rec, dict) else []
+            if ladder and rec.get("lt") and not rec.get("ls") and now - rec["lt"] < 86400:
+                found[str(int(item))] = {"t": int(rec["lt"]), "n": int(rec.get("ln") or 0),
+                                         "l": [int(round(x)) for x in ladder[:16]]}
+        if len(found) > len(items):
+            best_realm, items = realm, found
+    if not items:
+        sys.exit("No scan of your own in the last day to export. Do a full scan, then log out or /reload.")
+    target = Path(args.file) if args.file else Path.cwd() / ("CraftGraph-%s.cg.json" % time.strftime("%Y%m%d-%H%M"))
+    target.write_text(json.dumps({"format": SHARE_FORMAT, "version": 1, "realm": best_realm,
+                                  "from": "file", "made": now, "items": items}, separators=(",", ":")))
+    print("Exported %d prices for \"%s\" to %s" % (len(items), best_realm, target))
+
+
+def cmd_share_import(args):
+    """Puts a .cg.json file where the game reads it at the next login."""
+    if not args.file:
+        sys.exit("Which file?  craftgraph_sync.py share-import <file.cg.json>")
+    text = Path(args.file).read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except ValueError as error:
+        sys.exit("%s is not valid JSON: %s" % (args.file, error))
+    if data.get("format") != SHARE_FORMAT or not isinstance(data.get("items"), dict):
+        sys.exit("%s is JSON, but not CraftGraph prices." % args.file)
+    level = 0
+    while ("]" + "=" * level + "]") in text:
+        level += 1
+    (ADDON_DIR / "Data" / "Shared.lua").write_text(
+        "-- Put here by sync/craftgraph_sync.py share-import. Read by the addon at login.\n"
+        "local _, ns = ...\n"
+        "ns.SharedFile = [%s[%s]%s]\n" % ("=" * level, text, "=" * level), encoding="utf-8")
+    print("Ready: %d prices for \"%s\" from %s." % (len(data["items"]), data.get("realm"), data.get("from")))
+    print("Log in (or /reload) and the game says in chat how many it took in.")
+
+
+# ----------------------------------------------------------------------------
 # Is there a newer version of the addon?
 # ----------------------------------------------------------------------------
 REPOSITORY = "t-more/craftgraph"
@@ -994,13 +1045,16 @@ def main():
     parser = argparse.ArgumentParser(description="Bring Blizzard's hourly auction data into CraftGraph.")
     parser.add_argument("command", nargs="?", default="run",
                         choices=["setup", "run", "archive", "houses", "status", "install-timer", "remove-timer",
-                                 "install-watch", "remove-watch", "check-update"])
+                                 "install-watch", "remove-watch", "check-update",
+                                 "share-export", "share-import"])
+    parser.add_argument("file", nargs="?", help="for share-export and share-import: the .cg.json file")
     parser.add_argument("--fixture", help=argparse.SUPPRESS)      # read saved API answers (for tests)
     args = parser.parse_args()
     {"setup": cmd_setup, "run": cmd_run, "archive": cmd_archive, "houses": cmd_houses, "status": cmd_status,
      "install-timer": cmd_install_timer, "remove-timer": cmd_remove_timer,
      "install-watch": cmd_install_watch, "remove-watch": cmd_remove_watch,
-     "check-update": cmd_check_update}[args.command](args)
+     "check-update": cmd_check_update, "share-export": cmd_share_export,
+     "share-import": cmd_share_import}[args.command](args)
 
 
 if __name__ == "__main__":

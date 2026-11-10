@@ -88,6 +88,24 @@ When a forecast is not worth showing
   anyway, tick "Show forecasts that are only guesses" in the data sources
   window or type /cg guesses.
 
+Is now a good time to sell?
+  In Opportunities each row has a small "Sell?" mark: "now" when the price
+  of the last three hours is clearly above its middle price of the last
+  week, "wait" when clearly below, "ok" in between, a dash when there is too
+  little to compare. Hover the row for the numbers. The same line is in the
+  Sell bags tooltip. It needs no forecast, so it works from the first day.
+
+Sharing prices with other players
+  /cg share opens a box. "Export my prices" fills it with the prices of your
+  scans from the last day as text (JSON): copy it and send it, or save it as
+  a file ending in .cg.json. To take in what someone sent you, paste it into
+  the box and press Import; what happened is written under the box.
+  A .cg.json file can also be brought in from outside the game: on Windows
+  double-click "Import CraftGraph data" and pick the file; with Python,
+  sync/craftgraph_sync.py share-import <file>. The game then says in chat at
+  login how many prices it took in. Shared prices are used only where they
+  are newer than your own scan, and can be switched off in Data sources.
+
 Data sources
   Your own scans always count. Three second opinions can be switched off
   and on to see what each one changes: Blizzard's hourly data (optional

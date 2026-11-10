@@ -33,3 +33,12 @@ when the version is bumped; see [README.md](README.md).
   1 h, 3 h, 6 h, 12 h, 1 day; right-click goes back). It evens out the supply and demand lines
   and adds a thin white average through the scanned prices.
 - Pictures: a supply and demand story in the simulated market, and a GIF of the smoothing.
+- Opportunities: a "Sell?" mark on every row (now / ok / wait) from the last three hours against
+  the middle price of the last week; the reason is in the tooltip, also in Sell bags.
+- A price that stood still for days is now judged by how long it stood, not by how many points
+  were kept for it (it is stored as two). The count of scans is kept separately, so such an item
+  is no longer "too early to forecast" for ever.
+- Sharing prices: `/cg share` exports the last day's scans as JSON text and imports what is
+  pasted, saying what happened. Files ending in `.cg.json` can be brought in with "Import
+  CraftGraph data" on Windows or the Python tool. Shared prices are a data source with its own
+  switch.

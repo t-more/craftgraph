@@ -35,6 +35,9 @@ you are. After every scan it shows what the plan should earn now, and whether th
 
 ![A plan following the market](docs/media/plan.gif)
 
+**Share prices with friends.** Export your latest scan as text, send it, and they import it with
+one paste. It tells them plainly whether it worked.
+
 **Know when to sell.** For anything you hold, it names the best hour this week, if there is one.
 
 **Trust it to say "I don't know".** With too few scans, or a price that jumps about, it shows only

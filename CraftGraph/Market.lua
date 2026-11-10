@@ -251,6 +251,11 @@ local function AppendHistory(it, t, price, robust, total)
   -- History runs forward: a result stamped earlier than the last point
   -- (a full scan stored after a later lookup) is put at that point's time.
   if n >= 4 and t < h[n - 3] then t = h[n - 3] end
+  -- How many scans this item has had, whatever became of their points: a
+  -- price that never moves is two points however often it was looked at.
+  if not (it.ha and t - it.ha < SAME_SCAN_SECONDS) then
+    it.hc = (it.hc or n / 4) + 1
+  end
   -- "Still none listed" adds nothing new.
   if price == 0 and n >= 4 and h[n - 2] == 0 then return end
   -- it.ha is when the last point was first written. The window is counted
@@ -473,9 +478,243 @@ end
 -- for the auction house the player is on.
 function M.Online(id)
   local o = ns.Online
-  if not o or not o.items or o.realm ~= ns.realmKey or not M.Source("Online") then return nil end
-  return o.items[id], o
+  local meta = (o and o.items and o.realm == ns.realmKey and M.Source("Online")) and o or nil
+  local on = meta and meta.items[id] or nil
+  -- Prices another player shared count the same way: whichever is newer.
+  local shared = M.Shared(id)
+  if shared and (not on or (shared.t or 0) > (on.t or 0)) then return shared, meta end
+  return on, meta
 end
+
+------------------------------------------------------------------------------
+-- Sharing prices between players
+--
+-- One player exports the prices of a recent scan as text; another imports
+-- it. The text is plain JSON so that it can be read, checked and produced
+-- by anything, and so that it can grow: fields that are not known are
+-- ignored, and "version" says which shape it has.
+--
+--   { "format": "craftgraph-prices", "version": 1,
+--     "realm": "<auction house>", "from": "<character>", "made": <time>,
+--     "items": { "<item id>": { "t": <scan time>, "n": <units listed>,
+--                               "l": [price, units, price, units, ...] } } }
+--
+-- Imported prices are a second opinion like any other source: used only
+-- where they are newer than the player's own scan, switched off with one
+-- tick, and never mixed into the player's own history.
+------------------------------------------------------------------------------
+M.SHARE_FORMAT, M.SHARE_VERSION = "craftgraph-prices", 1
+local SHARE_LEVELS = 8                 -- price levels sent per item
+local SHARE_MAX_AGE = 7 * 86400        -- older prices are not taken in
+
+function M.Shared(id)
+  local sh = ns.realm and ns.realm.shared
+  if not sh or not sh.items or not M.Source("Shared") then return nil end
+  return sh.items[id], sh
+end
+
+local function Quote(text)
+  return '"' .. tostring(text):gsub('[%c"\\]', function(c)
+    if c == '"' then return '\\"' elseif c == "\\" then return "\\\\" end
+    return string.format("\\u%04x", c:byte())
+  end) .. '"'
+end
+
+-- The player's own scans of the last day, as JSON text. Returns the text
+-- and how many items it holds.
+function M.Export()
+  local now, parts = time(), {}
+  local ids = {}
+  for id, it in pairs(ns.realm and ns.realm.items or {}) do
+    if type(it) == "table" and it.lt and it.l and it.l[1] and not it.ls and now - it.lt < 86400 then
+      ids[#ids + 1] = id
+    end
+  end
+  table.sort(ids)
+  for _, id in ipairs(ids) do
+    local it = ns.realm.items[id]
+    local levels = {}
+    for i = 1, min(#it.l, SHARE_LEVELS * 2) do levels[i] = floor(it.l[i] + 0.5) end
+    parts[#parts + 1] = string.format('"%d":{"t":%d,"n":%d,"l":[%s]}', id, it.lt, it.ln or 0, table.concat(levels, ","))
+  end
+  local text = '{"format":' .. Quote(M.SHARE_FORMAT) .. ',"version":' .. M.SHARE_VERSION
+    .. ',"realm":' .. Quote(ns.realmKey or "") .. ',"from":' .. Quote(UnitName and UnitName("player") or "?")
+    .. ',"made":' .. now .. ',"items":{' .. table.concat(parts, ",") .. "}}"
+  return text, #ids
+end
+
+-- A small JSON reader: objects, arrays, strings, numbers, true, false, null.
+function M.ParseJSON(text)
+  local pos = 1
+  local function fail(what) error("not valid JSON: " .. what .. " at character " .. pos, 0) end
+  local function space() pos = text:find("%S", pos) or #text + 1 end
+  local value
+  local function str()
+    local out = {}
+    pos = pos + 1
+    while true do
+      local c = text:sub(pos, pos)
+      if c == "" then fail("text that does not end") end
+      if c == '"' then pos = pos + 1 return table.concat(out) end
+      if c == "\\" then
+        local e = text:sub(pos + 1, pos + 1)
+        if e == "u" then
+          local code = tonumber(text:sub(pos + 2, pos + 5), 16) or 63
+          out[#out + 1] = code < 128 and string.char(code) or "?"
+          pos = pos + 6
+        else
+          out[#out + 1] = ({ n = "\n", t = "\t", r = "\r", b = "\b", f = "\f" })[e] or e
+          pos = pos + 2
+        end
+      else
+        out[#out + 1] = c
+        pos = pos + 1
+      end
+    end
+  end
+  function value()
+    space()
+    local c = text:sub(pos, pos)
+    if c == "{" then
+      local obj = {}
+      pos = pos + 1
+      space()
+      if text:sub(pos, pos) == "}" then pos = pos + 1 return obj end
+      while true do
+        space()
+        if text:sub(pos, pos) ~= '"' then fail("a name was expected") end
+        local key = str()
+        space()
+        if text:sub(pos, pos) ~= ":" then fail("a colon was expected") end
+        pos = pos + 1
+        obj[key] = value()
+        space()
+        local d = text:sub(pos, pos)
+        pos = pos + 1
+        if d == "}" then return obj end
+        if d ~= "," then fail("a comma was expected") end
+      end
+    elseif c == "[" then
+      local arr = {}
+      pos = pos + 1
+      space()
+      if text:sub(pos, pos) == "]" then pos = pos + 1 return arr end
+      while true do
+        arr[#arr + 1] = value()
+        space()
+        local d = text:sub(pos, pos)
+        pos = pos + 1
+        if d == "]" then return arr end
+        if d ~= "," then fail("a comma was expected") end
+      end
+    elseif c == '"' then
+      return str()
+    elseif text:sub(pos, pos + 3) == "true" then pos = pos + 4 return true
+    elseif text:sub(pos, pos + 4) == "false" then pos = pos + 5 return false
+    elseif text:sub(pos, pos + 3) == "null" then pos = pos + 4 return nil
+    else
+      local num = text:match("^-?%d+%.?%d*[eE]?[-+]?%d*", pos)
+      if not num or num == "" then fail("something unexpected") end
+      pos = pos + #num
+      return tonumber(num)
+    end
+  end
+  local ok, result = pcall(value)
+  if not ok then return nil, result end
+  return result
+end
+
+-- Takes shared prices in. Returns a result table that says plainly what
+-- happened: ok, a sentence, and counts (taken, older than what was already
+-- held, too old, malformed). force: take it although it is for another
+-- auction house.
+function M.Import(text, force)
+  local function no(why) return { ok = false, text = why } end
+  if type(text) ~= "string" or not text:find("%S") then return no("Nothing to import: the box is empty.") end
+  local data, problem = M.ParseJSON(text)
+  if type(data) ~= "table" then return no("That is not CraftGraph data (" .. tostring(problem or "it is not JSON") .. ").") end
+  if data.format ~= M.SHARE_FORMAT then return no("That is JSON, but not CraftGraph prices.") end
+  if type(data.items) ~= "table" then return no("The data holds no items.") end
+  if data.realm ~= ns.realmKey and not force then
+    return { ok = false, otherRealm = true, text = "These prices are for another auction house (" .. tostring(data.realm)
+      .. "), not yours (" .. tostring(ns.realmKey) .. "). Press Import again to take them anyway." }
+  end
+  local now = time()
+  local shared = ns.realm.shared or { items = {} }
+  shared.items = shared.items or {}
+  local taken, older, tooOld, bad = 0, 0, 0, 0
+  for key, entry in pairs(data.items) do
+    local id = tonumber(key)
+    local ladder = type(entry) == "table" and entry.l
+    local okShape = id and type(entry.t) == "number" and type(ladder) == "table" and #ladder >= 2 and #ladder % 2 == 0
+    if okShape then
+      for i = 1, #ladder do
+        if type(ladder[i]) ~= "number" or ladder[i] < 0 then okShape = false end
+      end
+    end
+    if not okShape or entry.t > now + 900 then
+      bad = bad + 1
+    elseif now - entry.t > SHARE_MAX_AGE then
+      tooOld = tooOld + 1
+    else
+      local have = shared.items[id]
+      if have and have.t >= entry.t then
+        older = older + 1
+      else
+        local total = type(entry.n) == "number" and entry.n or 0
+        if total <= 0 then for i = 2, #ladder, 2 do total = total + ladder[i] end end
+        shared.items[id] = { t = entry.t, l = ladder, n = total }
+        taken = taken + 1
+      end
+    end
+  end
+  if taken > 0 then
+    shared.from = tostring(data.from or "someone")
+    shared.made = type(data.made) == "number" and data.made or now
+    shared.got = now
+    ns.realm.shared = shared
+    ns.generation = ns.generation + 1
+    ns.Fire("SOURCES")
+    ns.Fire("MARKET_UPDATED")
+  end
+  local parts = {}
+  if older > 0 then parts[#parts + 1] = older .. " no newer than what you had" end
+  if tooOld > 0 then parts[#parts + 1] = tooOld .. " over a week old" end
+  if bad > 0 then parts[#parts + 1] = bad .. " unreadable" end
+  local rest = #parts > 0 and (" Left out: " .. table.concat(parts, ", ") .. ".") or ""
+  local newer = type(data.version) == "number" and data.version > M.SHARE_VERSION
+  local result = { ok = taken > 0, taken = taken, older = older, tooOld = tooOld, bad = bad, from = data.from }
+  if taken > 0 then
+    result.text = "Imported " .. taken .. " prices from " .. tostring(data.from or "someone") .. ", scanned "
+      .. ns.Age(now - (type(data.made) == "number" and data.made or now)) .. "." .. rest
+      .. (newer and " It was made by a newer CraftGraph; anything this version does not know was skipped." or "")
+  else
+    result.text = "Nothing was imported." .. rest
+  end
+  ns.Log("share import: " .. result.text)
+  return result
+end
+
+-- Forgets everything that was shared.
+function M.ClearShared()
+  if ns.realm then ns.realm.shared = nil end
+  ns.generation = ns.generation + 1
+  ns.Fire("SOURCES")
+  ns.Fire("MARKET_UPDATED")
+end
+
+-- A .cg.json file put into Data/Shared.lua from outside the game is taken
+-- in once at login, and the outcome is said in chat and kept for the window.
+ns.Listen("LOGIN", function()
+  local file = ns.SharedFile
+  if type(file) ~= "string" or not ns.realm then return end
+  local mark = #file .. ":" .. file:sub(1, 80)
+  if ns.realm.sharedFileSeen == mark then return end
+  ns.realm.sharedFileSeen = mark
+  local result = M.Import(file, false)
+  M.lastImport = result
+  ns.Print("shared prices file: " .. result.text:gsub(" Press Import again to take them anyway%.", ""))
+end)
 
 ------------------------------------------------------------------------------
 -- Sales seen between full scans
@@ -744,6 +983,7 @@ function M.Info(id)
     local info = {
       ladder = on.l, total = on.n or 0, age = now - on.t, source = "scan", online = true,
       blur = on.z, price = on.l[1], turnover = OnlineSold(id),
+      shared = (M.Shared(id) == on) or nil,
     }
     info.soldKnown = info.turnover ~= nil
     if info.turnover == nil and it and (it.vn or 0) >= 0.4 then info.turnover = it.v end
@@ -811,6 +1051,20 @@ function M.Series(id)
   -- Hourly prices from the online data, where the player has no scan of
   -- their own within twenty minutes.
   local on = M.Online(id)
+  -- A price another player shared is one more point, unless a scan of the
+  -- player's own stands at the same moment.
+  local shared = M.Shared(id)
+  if shared and shared.l and shared.l[1] and shared.l[1] > 0 then
+    local clash = false
+    for j = 1, #out do
+      if math.abs(out[j][1] - shared.t) < HISTORY_MERGE_SECONDS then clash = true break end
+    end
+    if not clash then
+      out[#out + 1] = { shared.t, shared.l[1] }
+      if not first or shared.t < first then first = shared.t end
+      table.sort(out, function(a, b) return a[1] < b[1] end)
+    end
+  end
   if on and on.h then
     local own = #out
     for i = 1, #on.h, 3 do

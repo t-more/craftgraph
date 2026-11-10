@@ -132,6 +132,7 @@ local DEFAULTS = {
   chartFlow = false,  -- draw supply (units listed) on the price chart
   chartDemand = false, -- draw demand (units sold a day) on the price chart
   showGuesses = false, -- show forecasts and patterns even where they are only guesses
+  srcShared = true,   -- use prices another player shared with you
   srcOnline = true,   -- use Blizzard's hourly data when the sync tool has brought it in
   srcAuctionator = true, -- use Auctionator's prices and history where we have none
   srcSales = true,    -- use sales worked out from auctions that vanish between full scans
@@ -387,6 +388,10 @@ SlashCmdList["CRAFTGRAPH"] = function(msg)
     ns.generation = ns.generation + 1
     ns.Fire("SOURCES")
     ns.Fire("MARKET_UPDATED")
+    return
+  end
+  if msg == "share" or msg == "export" or msg == "import" then
+    if ns.UI and ns.UI.ShowShare then ns.Safe(ns.UI.ShowShare, msg == "import" and "import" or "export") end
     return
   end
   if msg == "sources" or msg == "data" then

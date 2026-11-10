@@ -1973,8 +1973,8 @@ do
   M.SetSource("Sales", true)
   check(M.Sales(id) ~= nil and ns.UI.SourcesText() == nil, "switched on again, they are")
   ns.UI.ToggleSources()
-  check(ns.UI.sourcesFrame:IsShown() and #ns.UI.sourcesFrame.rows == 3, "the data sources window opens with its three switches")
-  local row = ns.UI.sourcesFrame.rows[2]
+  check(ns.UI.sourcesFrame:IsShown() and #ns.UI.sourcesFrame.rows == 4, "the data sources window opens with its four switches")
+  local row = ns.UI.sourcesFrame.rows[3]
   row.check:SetChecked(false)
   row.check.scripts.OnClick(row.check)
   check(M.Source("Auctionator") == false, "unticking Auctionator switches it off")
@@ -2163,6 +2163,150 @@ do
   check(fixed.v == nil and fixed.sa == nil and fixed.sb == nil and fixed.sn == 2, "turnover built on the pieces starts again; sellers are counted afresh")
   check(M.Repair(db) == 0 and db.dataVersion == 2, "the repair runs once")
   ns.realm.items[a], ns.realm.items[b] = nil, nil
+end
+
+------------------------------------------------------------------------------
+-- Is now a good time to sell? Lightly smoothed scans against the week.
+do
+  local M, S = ns.Market, ns.Stats
+  local id = 2606
+  local function fill(lastHours)
+    ns.realm.items[id] = nil
+    -- Five days at 100, every three hours; then the last hours as given.
+    for step = 40, 2, -1 do M.Record(id, { { 100, 20 } }, { full = true, t = now - step * 10800 }) end
+    for i, price in ipairs(lastHours) do
+      M.Record(id, { { price, 20 } }, { full = true, t = now - (#lastHours - i) * 2400 })
+    end
+    ns.generation = ns.generation + 1
+    return S.SellSignal(id)
+  end
+  local up = fill({ 118, 122, 120 })
+  check(up.verdict == "good" and near(up.usual, 100) and up.ratio > 0.06 and up.ratio < 0.22,
+    string.format("a price that rose a fifth an hour ago is a good time to sell (%.0f%% over %s)", (up.ratio or 0) * 100, tostring(up.usual)))
+  check(up.recent > 106 and up.recent < 121, "\"now\" is the last three hours averaged, each price for as long as it stood: " .. tostring(up.recent))
+  local down = fill({ 84, 80, 82 })
+  check(down.verdict == "poor", "a price a fifth under is not")
+  local flat = fill({ 101, 99, 102 })
+  check(flat.verdict == "fair", "a price about where it usually is is fair")
+  local spike = fill({ 100, 100, 160 })
+  check(spike.recent < 125, "one high scan among three does not swing it far: " .. tostring(spike.recent))
+  -- Too little to compare, or too old.
+  ns.realm.items[id] = nil
+  for step = 3, 0, -1 do M.Record(id, { { 100, 20 } }, { full = true, t = now - step * 1800 }) end
+  ns.generation = ns.generation + 1
+  local few = S.SellSignal(id)
+  check(few.verdict == nil and few.why:find("Too few scans", 1, true), "four scans in two hours give no verdict: " .. tostring(few.why))
+  ns.realm.items[id] = nil
+  for step = 30, 20, -1 do M.Record(id, { { 100, 20 } }, { full = true, t = now - step * 7200 }) end
+  ns.generation = ns.generation + 1
+  check(S.SellSignal(id).verdict == nil and S.SellSignal(id).why:find("over a day old", 1, true), "a scan over a day old gives none either")
+  check(S.SellSignal(999997).verdict == nil, "nor does an item without prices")
+  -- In the list and in its tooltip.
+  fill({ 118, 122, 120 })
+  check(ns.UI.SellSignalText({ id = id, kind = "flip" }):find("now", 1, true) ~= nil, "the list says \"now\"")
+  check(ns.UI.SellSignalText({ id = id, kind = "tovendor" }) == "", "a sale to a vendor has no such signal")
+  local lines = ns.UI.SellSignalLines(id)
+  check(lines[1][1]:find("A good time to sell", 1, true) ~= nil and lines[1][1]:find("% over", 1, true) ~= nil,
+    "the tooltip gives the reason: " .. lines[1][1])
+  fill({ 84, 80, 82 })
+  check(ns.UI.SellSignalText({ id = id, kind = "craft" }):find("wait", 1, true) ~= nil, "a poor time reads \"wait\"")
+  ns.realm.items[id] = nil
+  ns.generation = ns.generation + 1
+  ns.UI.ShowWorth(true) RunTimers()
+  local view
+  for _, f in ipairs(frames) do if f.filters and f.summary then view = f end end
+  local seen = false
+  for _, row in ipairs(view.rows) do
+    if row.shown and row.data and row.signal then seen = true end
+  end
+  check(seen, "every row of the list carries the signal")
+  ns.UI.ShowWorth(false)
+end
+
+------------------------------------------------------------------------------
+-- Sharing prices between players as JSON text.
+do
+  local M = ns.Market
+  local a, b, c = 2607, 2608, 2609
+  for _, id in ipairs({ a, b, c }) do ns.realm.items[id] = nil end
+  ns.realm.shared = nil
+  M.Record(a, { { 50, 10 }, { 60, 5 } }, { full = true, t = now - 600 })
+  M.Record(b, { { 200, 3 } }, { full = true, t = now - 600 })
+  M.Record(c, { { 9, 1 } }, { full = true, t = now - 3 * 86400 })           -- too old to send
+  local text, count = M.Export()
+  check(count >= 2 and text:find('"format":"craftgraph-prices"', 1, true) and text:find('"version":1', 1, true),
+    "export is JSON that names its format and version (" .. count .. " items)")
+  check(text:find('"' .. a .. '":{"t":' .. (now - 600) .. ',"n":15,"l":[50,10,60,5]}', 1, true) ~= nil, "an item carries its scan time, amount and ladder")
+  check(text:find('"' .. c .. '":', 1, true) == nil, "scans over a day old are not sent")
+  local parsed = M.ParseJSON(text)
+  check(type(parsed) == "table" and parsed.realm == ns.realmKey and parsed.items[tostring(b)].l[1] == 200, "the text reads back as JSON")
+  check(M.ParseJSON('{"a":[1,2.5,-3e2,"x\\"y",true,false,null],"b":{}}').a[4] == 'x"y', "the reader copes with the usual JSON")
+  check(M.ParseJSON("{oops") == nil, "and says so when it is not JSON")
+
+  -- The friend's side: none of these items scanned here.
+  for _, id in ipairs({ a, b }) do ns.realm.items[id] = nil end
+  ns.generation = ns.generation + 1
+  check(M.Info(a) == nil, "before importing, the item is unknown here")
+  local result = M.Import(text)
+  check(result.ok and result.taken == count and result.text:find("Imported " .. count .. " prices from", 1, true),
+    "importing says how many prices came in and from whom: " .. result.text)
+  local info = M.Info(a)
+  check(info and info.price == 50 and info.total == 15 and info.shared and info.age == 600, "an imported price is used, marked as shared, with its real age")
+  check(#M.Series(a) == 1 and M.Get(a) == nil, "it shows as a price point without entering your own history")
+  -- Importing the same again changes nothing, and says so.
+  local again = M.Import(text)
+  check(not again.ok and again.older == count and again.text:find("no newer than what you had", 1, true), "the same data twice: " .. again.text)
+  -- Your own newer scan wins.
+  M.Record(a, { { 44, 7 } }, { full = true, t = now - 60 })
+  check(M.Info(a).price == 44 and not M.Info(a).shared, "your own newer scan takes precedence")
+  -- The switch.
+  M.SetSource("Shared", false)
+  check(M.Info(b) == nil, "switched off, shared prices are not used")
+  M.SetSource("Shared", true)
+  check(M.Info(b).price == 200, "switched on, they are")
+  -- Things that must be refused, each with a reason.
+  check(not M.Import("").ok and M.Import("").text:find("empty", 1, true), "an empty box is refused")
+  check(M.Import("hello there").text:find("not CraftGraph data", 1, true) ~= nil, "text that is not JSON is refused")
+  check(M.Import('{"format":"something-else","items":{}}').text:find("not CraftGraph prices", 1, true) ~= nil, "other JSON is refused")
+  local other = text:gsub('"realm":"[^"]*"', '"realm":"Elsewhere - Horde"')
+  local refused = M.Import(other)
+  check(not refused.ok and refused.otherRealm and refused.text:find("another auction house", 1, true), "prices for another auction house are refused at first")
+  local future = '{"format":"craftgraph-prices","version":2,"realm":"' .. ns.realmKey .. '","from":"Zed","made":' .. now
+    .. ',"extra":{"x":1},"items":{"' .. c .. '":{"t":' .. (now - 100) .. ',"l":[70,2],"colour":"blue"},"bad":{"t":1},"'
+    .. b .. '":{"t":' .. (now - 30 * 86400) .. ',"l":[1,1]}}}'
+  local mixed = M.Import(future)
+  check(mixed.ok and mixed.taken == 1 and mixed.bad == 1 and mixed.tooOld == 1 and mixed.text:find("newer CraftGraph", 1, true),
+    "a newer format with unknown fields is read as far as it is understood: " .. mixed.text)
+
+  -- The window: export fills the box, import reports under it.
+  ns.UI.ShowShare("export")
+  local f = ns.UI.shareFrame
+  check(f:IsShown() and f.box.text:find("craftgraph-prices", 1, true) and f.result.text:find("Exported", 1, true), "the share window exports into its box: " .. f.result.text)
+  f.box:SetText("not json at all")
+  ns.UI.ShareImport()
+  check(f.result.text:find("not CraftGraph data", 1, true) ~= nil, "a failed import says why under the box")
+  f.box:SetText(other)
+  ns.UI.ShareImport()
+  check(f.result.text:find("Press Import again", 1, true) ~= nil, "another auction house: asked to confirm")
+  M.ClearShared()
+  ns.UI.ShareImport()
+  check(f.result.text:find("Imported", 1, true) ~= nil and ns.realm.shared ~= nil, "pressing Import again takes it: " .. f.result.text)
+  SlashCmdList.CRAFTGRAPH("import")
+  check(f.box.text == "" and f.result.text:find("Last time", 1, true) ~= nil, "/cg import opens an empty box and recalls the last result")
+
+  -- A file brought in from outside the game is imported once at login.
+  M.ClearShared()
+  ns.realm.sharedFileSeen = nil
+  ns.SharedFile = text
+  ns.Fire("LOGIN")
+  check(ns.realm.shared and M.lastImport and M.lastImport.taken == count, "a shared file is taken in at login")
+  M.ClearShared()
+  ns.Fire("LOGIN")
+  check(ns.realm.shared == nil, "and not a second time")
+  ns.SharedFile = false
+  f:Hide()
+  for _, id in ipairs({ a, b, c }) do ns.realm.items[id] = nil end
+  ns.generation = ns.generation + 1
 end
 
 ------------------------------------------------------------------------------

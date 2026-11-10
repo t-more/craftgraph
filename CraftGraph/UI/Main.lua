@@ -675,6 +675,40 @@ local FILTERS = {
   { key = "item", text = "This item" }, { key = "later", text = "When" },
 }
 
+-- Is now a good time to sell what a row ends in? One short word for the
+-- list ("now", "ok", "wait", or a dash when there is too little to say or
+-- the sale is to a vendor), and sentences for the tooltip.
+function UI.SellSignalText(d)
+  if not d.id or d.kind == "tovendor" or d.kind == "bags" then return "" end
+  local signal = ns.Stats.SellSignal(d.id)
+  if signal.verdict == "good" then return "|cff40ff40now|r" end
+  if signal.verdict == "poor" then return "|cffff8c33wait|r" end
+  if signal.verdict == "fair" then return GREY .. "ok|r" end
+  return GREY .. "-|r"
+end
+
+function UI.SellSignalLines(id)
+  local signal = ns.Stats.SellSignal(id)
+  if not signal.verdict then return { { "Selling now: " .. signal.why, 0.6, 0.6, 0.6 } } end
+  local over = signal.ratio >= 0
+  local pct = ns.Round(math.abs(signal.ratio) * 100)
+  local period = signal.span >= 2 * 86400 and (ns.Round(signal.span / 86400) .. " days")
+    or (ns.Round(signal.span / 3600) .. " h")
+  local head = signal.verdict == "good" and { "A good time to sell", 0.25, 1, 0.25 }
+    or signal.verdict == "poor" and { "Not a good time to sell", 1, 0.55, 0.2 }
+    or { "A fair time to sell", 0.8, 0.8, 0.8 }
+  local lines = { { head[1] .. ": the last three hours average " .. ns.Money(signal.recent) .. ", "
+    .. (pct == 0 and "right at" or (pct .. "% " .. (over and "over" or "under"))) .. " its middle price of "
+    .. ns.Money(signal.usual) .. " over the last " .. period .. " (" .. signal.scans .. " scans).", head[2], head[3], head[4] } }
+  -- A better hour ahead, where a forecast is worth having.
+  local best = ns.Jobs.BestMoment(id)
+  if best and best.hours > 0 and best.gain >= signal.margin then
+    lines[#lines + 1] = { "The forecast names a better hour: " .. best.label .. ", about "
+      .. ns.Round(best.gain * 100) .. "% more.", 0.45, 0.75, 1 }
+  end
+  return lines
+end
+
 -- A profit or loss in colour, with its sign.
 local function Signed(copper)
   return (copper < 0 and "|cffff5040-" or "|cff40ff40+") .. ns.Money(math.abs(copper)) .. "|r"
@@ -747,6 +781,9 @@ local function WorthTooltip(row)
       or "now", 1, 0.82, 0, 1, 1, 1)
     GameTooltip:AddLine("From this item's trend and its hour and weekday habits. A later hour is only "
       .. "named when it beats now by more than the doubt that waiting adds.", 0.8, 0.8, 0.8, true)
+    for _, line in ipairs(UI.SellSignalLines(d.id)) do
+      GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
+    end
     GameTooltip:Show()
     return
   end
@@ -772,6 +809,11 @@ local function WorthTooltip(row)
     GameTooltip:AddLine("List what you already hold. Opens the Sell bags list.", 1, 1, 1, true)
   end
   GameTooltip:AddDoubleLine("Expected profit", ns.Money(d.profit) .. " \194\177" .. ns.Money(d.sd), 1, 0.82, 0, 0.25, 1, 0.25)
+  if d.id and d.kind ~= "tovendor" and d.kind ~= "bags" then
+    for _, line in ipairs(UI.SellSignalLines(d.id)) do
+      GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
+    end
+  end
   if d.id and d.kind ~= "bags" then
     AddProjection(ns.Jobs.Projection(d.id, d.qty, d.kind ~= "craft" and GoalOf(d) or nil))
   end
@@ -873,11 +915,12 @@ local function CreateWorth(parent)
 
   local COLS = {
     { key = "name", text = "What", x = 14, justify = "LEFT", width = 190 },
-    { key = "kind", text = "How", x = 232, justify = "LEFT", width = 150 },
-    { key = "qty", text = "Amount", right = 446, justify = "RIGHT", width = 60 },
-    { key = "outlay", text = "Costs up front", right = 548, justify = "RIGHT", width = 96 },
-    { key = "profit", text = "Profit", right = 668, justify = "RIGHT", width = 100 },
-    { key = "effort", text = "Steps", right = 716, justify = "RIGHT", width = 44 },
+    { key = "kind", text = "How", x = 232, justify = "LEFT", width = 124 },
+    { key = "qty", text = "Amount", right = 420, justify = "RIGHT", width = 56 },
+    { key = "outlay", text = "Costs up front", right = 522, justify = "RIGHT", width = 96 },
+    { key = "profit", text = "Profit", right = 642, justify = "RIGHT", width = 100 },
+    { key = "effort", text = "Steps", right = 680, justify = "RIGHT", width = 36 },
+    { key = "signal", text = "Sell?", right = 718, justify = "RIGHT", width = 36 },
   }
   for _, c in ipairs(COLS) do
     local h = CreateFrame("Button", nil, f)
@@ -916,16 +959,19 @@ local function CreateWorth(parent)
     row.name:SetWordWrap(false)
     row.kind = Text(row, "GameFontHighlightSmall")
     row.kind:SetPoint("LEFT", row, "LEFT", 224, 0)
-    row.kind:SetWidth(158)
+    row.kind:SetWidth(132)
     row.kind:SetWordWrap(false)
     row.qty = Text(row, "GameFontHighlightSmall", "RIGHT")
-    row.qty:SetPoint("RIGHT", row, "LEFT", 438, 0)
+    row.qty:SetPoint("RIGHT", row, "LEFT", 412, 0)
     row.outlay = Text(row, "GameFontHighlightSmall", "RIGHT")
-    row.outlay:SetPoint("RIGHT", row, "LEFT", 540, 0)
+    row.outlay:SetPoint("RIGHT", row, "LEFT", 514, 0)
     row.profit = Text(row, "GameFontHighlightSmall", "RIGHT")
-    row.profit:SetPoint("RIGHT", row, "LEFT", 660, 0)
+    row.profit:SetPoint("RIGHT", row, "LEFT", 634, 0)
     row.effort = Text(row, "GameFontDisableSmall", "RIGHT")
-    row.effort:SetPoint("RIGHT", row, "LEFT", 708, 0)
+    row.effort:SetPoint("RIGHT", row, "LEFT", 672, 0)
+    -- Is now a good time to sell it: "now", "ok" or "wait".
+    row.signal = Text(row, "GameFontHighlightSmall", "RIGHT")
+    row.signal:SetPoint("RIGHT", row, "LEFT", 708, 0)
     row.act = Button(row, "", 66)
     row.act:SetHeight(19)
     row.act:SetPoint("RIGHT", row, "RIGHT", -4, 0)
@@ -1083,6 +1129,7 @@ function UI.UpdateWorth()
         or "|cff40ff40+" .. ns.Money(d.profit) .. "|r"
         .. (d.sd > 0 and (GREY .. " \194\177" .. min(999, ns.Round(100 * d.sd / max(d.profit, 1))) .. "%|r") or ""))
       row.effort:SetText(d.effort)
+      row.signal:SetText(UI.SellSignalText(d))
       local text, enabled, fn, tip = DealAction(d)
       row.act:SetText(text)
       row.act:SetEnabled(enabled and true or false)
@@ -1216,6 +1263,9 @@ local function CreateSell(parent)
       end
       GameTooltip:AddDoubleLine("After the auction cut", ns.Money(d.net) .. " \194\177" .. ns.Money(d.sd), 1, 0.82, 0, 1, 1, 1)
       GameTooltip:AddDoubleLine("A vendor would pay", ns.Money(d.net - d.gain), 1, 0.82, 0, 1, 1, 1)
+      for _, line in ipairs(UI.SellSignalLines(d.id)) do
+        GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
+      end
       if d.reserved then
         GameTooltip:AddLine("Your plan needs this as a material, so it is left out of Sell next.", 1, 1, 1, true)
       elseif d.none then
@@ -3361,6 +3411,18 @@ local SOURCES = {
     end,
     tip = "Prices, depth and sales from Blizzard's hourly auction data, brought in by the optional sync "
       .. "tool. Used where it is newer than your own scan." },
+  { key = "Shared", text = "Prices shared by another player",
+    note = function()
+      local _, sh = ns.Market.Shared(0)
+      local held = ns.realm and ns.realm.shared
+      if not held or not held.items or not next(held.items) then return "none imported (/cg share)" end
+      local n = 0
+      for _ in pairs(held.items) do n = n + 1 end
+      return n .. " prices from " .. tostring(held.from) .. ", scanned " .. ns.Age(time() - (held.made or 0))
+        .. (sh and "" or " (switched off)")
+    end,
+    tip = "Prices another player exported and you imported (/cg share). Used where they are newer than "
+      .. "your own scan, and never mixed into your own history." },
   { key = "Auctionator", text = "Auctionator's prices",
     note = function() return _G.Auctionator and "installed" or "not installed" end,
     tip = "Auctionator's last price for items you have not scanned here, and its older daily history." },
@@ -3454,7 +3516,12 @@ function UI.ToggleSources()
     gnote:SetPoint("TOPLEFT", glabel, "BOTTOMLEFT", 0, -2)
     gnote:SetText("off: hidden where they would mislead")
     f.guess = guess
-    f:SetHeight(62 + (#SOURCES + 1) * 38)
+    f:SetHeight(62 + (#SOURCES + 1) * 38 + 30)
+    local share = Button(f, "Share prices ...", 130)
+    share:SetPoint("BOTTOMLEFT", 12, 10)
+    share:SetScript("OnClick", function() ns.Safe(UI.ShowShare, "export") end)
+    Tip(share, "Share prices", "Export the prices of your latest scans as text for another player, or "
+      .. "import what another player sent you.")
     tinsert(UISpecialFrames, "CraftGraphSources")
     f:Hide()
     sourcesFrame = f
@@ -3467,6 +3534,124 @@ end
 ns.Listen("SOURCES", function()
   UpdateSources()
 end)
+
+------------------------------------------------------------------------------
+-- Sharing prices: a box of text to copy out of or paste into. What an
+-- import did is always said in plain words under the box, green when it
+-- worked and orange when it did not.
+------------------------------------------------------------------------------
+local shareFrame
+local forceNext = false
+
+local function ShareSay(text, ok)
+  shareFrame.result:SetText(text or "")
+  if ok == true then shareFrame.result:SetTextColor(0.3, 1, 0.3)
+  elseif ok == false then shareFrame.result:SetTextColor(1, 0.55, 0.2)
+  else shareFrame.result:SetTextColor(0.8, 0.8, 0.8) end
+end
+
+function UI.ShareExport()
+  local text, count = ns.Market.Export()
+  shareFrame.box:SetText(text)
+  if shareFrame.box.HighlightText then shareFrame.box:HighlightText() end
+  if shareFrame.box.SetFocus then shareFrame.box:SetFocus() end
+  if count == 0 then
+    ShareSay("Nothing to export: no scan of your own in the last day. Do a full scan first.", false)
+  else
+    ShareSay("Exported " .. count .. " prices (" .. ns.Round(#text / 1024) .. " KB). Press Ctrl+C to copy, then send it "
+      .. "or save it as a file ending in .cg.json.", true)
+  end
+  forceNext = false
+  return count
+end
+
+function UI.ShareImport()
+  local result = ns.Market.Import(shareFrame.box:GetText(), forceNext)
+  forceNext = result.otherRealm or false
+  ns.Market.lastImport = result
+  ShareSay(result.text, result.ok)
+  return result
+end
+
+function UI.ShowShare(mode)
+  if not shareFrame then
+    local f = CreateFrame("Frame", "CraftGraphShare", UIParent, "BackdropTemplate")
+    f:SetSize(520, 330)
+    f:SetPoint("CENTER", 0, 40)
+    f:SetFrameStrata("DIALOG")
+    f:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
+      insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    local title = Text(f, "GameFontNormal")
+    title:SetPoint("TOPLEFT", 12, -10)
+    title:SetText("Share prices")
+    local help = Text(f, "GameFontHighlightSmall")
+    help:SetPoint("TOPLEFT", 12, -30)
+    help:SetPoint("TOPRIGHT", -12, -30)
+    help:SetWordWrap(true)
+    help:SetMaxLines(2)
+    help:SetText("Export puts the prices of your scans from the last day in the box as text, to copy and send. "
+      .. "To take in what someone sent you, paste it into the box and press Import.")
+    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", 2, 2)
+
+    local scroll = CreateFrame("ScrollFrame", "CraftGraphShareScroll", f, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", 14, -64)
+    scroll:SetPoint("BOTTOMRIGHT", -34, 76)
+    local back = f:CreateTexture(nil, "BACKGROUND", nil, 1)
+    back:SetPoint("TOPLEFT", scroll, -4, 4)
+    back:SetPoint("BOTTOMRIGHT", scroll, 4, -4)
+    back:SetColorTexture(0, 0, 0, 0.55)
+    local box = CreateFrame("EditBox", nil, scroll)
+    box:SetMultiLine(true)
+    box:SetAutoFocus(false)
+    box:SetFontObject("GameFontHighlightSmall")
+    box:SetWidth(460)
+    box:SetMaxLetters(0)
+    box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    scroll:SetScrollChild(box)
+    f.box = box
+
+    f.result = Text(f, "GameFontHighlightSmall")
+    f.result:SetPoint("BOTTOMLEFT", 14, 36)
+    f.result:SetPoint("BOTTOMRIGHT", -14, 36)
+    f.result:SetWordWrap(true)
+    f.result:SetMaxLines(3)
+    f.result:SetJustifyV("BOTTOM")
+
+    local export = Button(f, "Export my prices", 130)
+    export:SetPoint("BOTTOMLEFT", 12, 10)
+    export:SetScript("OnClick", function() ns.Safe(UI.ShareExport) end)
+    local import = Button(f, "Import what is in the box", 170)
+    import:SetPoint("LEFT", export, "RIGHT", 6, 0)
+    import:SetScript("OnClick", function() ns.Safe(UI.ShareImport) end)
+    local forget = Button(f, "Forget shared prices", 140)
+    forget:SetPoint("BOTTOMRIGHT", -12, 10)
+    forget:SetScript("OnClick", function()
+      ns.Market.ClearShared()
+      ShareSay("Shared prices forgotten: only your own scans and the other sources are used.", nil)
+    end)
+    tinsert(UISpecialFrames, "CraftGraphShare")
+    f:Hide()
+    shareFrame = f
+    UI.shareFrame = f
+  end
+  shareFrame:Show()
+  forceNext = false
+  if mode == "import" then
+    shareFrame.box:SetText("")
+    if shareFrame.box.SetFocus then shareFrame.box:SetFocus() end
+    local last = ns.Market.lastImport
+    ShareSay(last and ("Last time: " .. last.text) or "Paste the text here (Ctrl+V), then press Import.", last and last.ok or nil)
+  else
+    UI.ShareExport()
+  end
+end
 
 -- What the auto scan is doing, in a few words, beside its switch.
 function UI.AutoText()

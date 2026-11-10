@@ -19,6 +19,34 @@ or with `/cg sources`.
 
 Switch one off and the numbers are worked out again without it, so you can see what it changes.
 
+## Sharing prices with another player
+`/cg share` opens a box of text.
+
+- **Export my prices** fills it with the prices of your scans from the last day. Copy it and send
+  it, or save it as a file ending in `.cg.json`.
+- **Import** takes in whatever is pasted in the box. Under the box it says what happened: how
+  many prices came in and from whom, or why nothing did.
+
+A `.cg.json` file can also be brought in from outside the game, since the game cannot open files:
+on Windows double-click **Import CraftGraph data** and pick the file; with Python,
+`sync/craftgraph_sync.py share-import <file>` (and `share-export` writes one). At your next login
+the game says in chat how many prices it took in.
+
+Shared prices are a second opinion: used only where they are newer than your own scan, never
+mixed into your own history, refused if they are for another auction house unless you insist,
+and switched off with one tick.
+
+The format is plain JSON, so anything can read or make it:
+
+```json
+{ "format": "craftgraph-prices", "version": 1,
+  "realm": "<auction house>", "from": "<character>", "made": 1794317899,
+  "items": { "2840": { "t": 1794317022, "n": 148, "l": [970, 14, 974, 61] } } }
+```
+
+`l` is the price ladder: price, units, price, units. Fields a version does not know are ignored,
+so the format can grow.
+
 ## The optional Python tool
 The game cannot reach the internet or write a database, so those two jobs sit in a small tool,
 `sync/craftgraph_sync.py`, that runs outside the game:

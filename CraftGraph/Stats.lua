@@ -484,14 +484,9 @@ function S.Trend(id)
   local out = { scans = #series, swing = exp(sqrt(entry.model.s2)) - 1 }
   out.now = exp((S.Eval(entry.model, 0)))
 
-  local recent = {}
-  for i = 1, #series do
-    if now - series[i][1] <= 14 * 86400 then recent[#recent + 1] = series[i][2] end
-  end
-  if #recent >= 3 then
-    table.sort(recent)
-    local mid = #recent / 2
-    out.usual = (#recent % 2 == 1) and recent[math.ceil(mid)] or (recent[mid] + recent[mid + 1]) / 2
+  local usual, points = S.Middle(series, now, 14 * 86400)
+  if usual and points >= 3 then
+    out.usual = usual
     out.vsUsual = out.now / out.usual - 1
   end
 
@@ -652,12 +647,15 @@ function S.Trust(id)
   end
   local span = model.t[model.n] - model.t[1]
   local _, sd = S.Eval(model, 1)
-  out.scans, out.days, out.swing = model.n, span, exp(sqrt(model.s2)) - 1
+  -- Scans, not points: a price that never moved is two points.
+  local record = ns.Market.Get(id)
+  local scans = max(model.n, record and record.hc or 0)
+  out.scans, out.days, out.swing = scans, span, exp(sqrt(model.s2)) - 1
   local watched = span >= 1 and (floor(span * 10 + 0.5) / 10 .. " days") or (floor(span * 24 + 0.5) .. " h")
-  if model.n < S.MIN_SCANS or span < S.MIN_DAYS then
+  if scans < S.MIN_SCANS or span < S.MIN_DAYS then
     out.state = "early"
-    out.short = "Too early to forecast (" .. model.n .. (model.n == 1 and " scan, " or " scans, ") .. watched .. ")"
-    out.why = "Too early to forecast: " .. model.n .. (model.n == 1 and " scan" or " scans") .. " over " .. watched
+    out.short = "Too early to forecast (" .. scans .. (scans == 1 and " scan, " or " scans, ") .. watched .. ")"
+    out.why = "Too early to forecast: " .. scans .. (scans == 1 and " scan" or " scans") .. " over " .. watched
       .. " so far. It takes at least " .. S.MIN_SCANS .. " scans over " .. S.MIN_DAYS .. " days."
   elseif sd > S.MAX_DAY_SD then
     out.state = "chaotic"
@@ -687,6 +685,86 @@ function S.Show(id)
   if ns.settings and ns.settings.showGuesses then return true, true, nil, nil, t end
   if t.forecast and t.pattern then return true, true, nil, nil, t end
   return t.forecast, t.pattern, t.short, t.why, t
+end
+
+------------------------------------------------------------------------------
+-- Is now a good time to sell?
+--
+-- A plain comparison on lightly smoothed scans, with no forecast in it, so
+-- it works from the first day: the average price over the last three hours
+-- against the middle price of the last week (or of as much as there is).
+--   good   clearly above its middle price
+--   fair   about there
+--   poor   clearly below
+-- "Clearly" is 5%, or half of what the price typically moves in a day when
+-- that is more. nil verdict: too little to compare, with the reason.
+------------------------------------------------------------------------------
+S.SIGNAL_RECENT = 3 * 3600      -- "now" is the average over this long
+S.SIGNAL_USUAL = 7 * 86400      -- compared with the middle price over this long
+S.SIGNAL_MARGIN = 0.05
+S.SIGNAL_MIN_SCANS, S.SIGNAL_MIN_SPAN = 6, 6 * 3600
+
+-- The middle price over the last `window` seconds, each price counting for
+-- as long as it stood (until the next scan, six hours at most). Counting
+-- points instead would be wrong: a price that stood still for days is kept
+-- as two points. Returns the price, the points used and the time they span.
+function S.Middle(series, now, window)
+  local list, total, first = {}, 0, nil
+  for i = #series, 1, -1 do
+    local age = now - series[i][1]
+    if age > window then break end
+    local untilNext = (series[i + 1] and series[i + 1][1] or now) - series[i][1]
+    local weight = max(60, min(untilNext, 6 * 3600))
+    list[#list + 1] = { series[i][2], weight }
+    total = total + weight
+    first = series[i][1]
+  end
+  if #list == 0 then return nil, 0, 0 end
+  table.sort(list, function(a, b) return a[1] < b[1] end)
+  local half, run = total / 2, 0
+  for _, item in ipairs(list) do
+    run = run + item[2]
+    if run >= half then return item[1], #list, series[#series][1] - first end
+  end
+  return list[#list][1], #list, series[#series][1] - first
+end
+
+function S.SellSignal(id)
+  local entry = S.ForItem(id)
+  local series, now = entry.series, entry.now
+  if not entry.model or #series == 0 then return { why = "No price recorded yet." } end
+  local last = series[#series]
+  if now - last[1] > 86400 then
+    return { why = "The last scan is over a day old: scan again to judge." }
+  end
+  local usual, points, span = S.Middle(series, now, S.SIGNAL_USUAL)
+  local record = ns.Market.Get(id)
+  local scans = max(points, record and record.hc or 0)
+  if scans < S.SIGNAL_MIN_SCANS or span < S.SIGNAL_MIN_SPAN then
+    return { why = "Too few scans to compare with yet (" .. scans .. " over "
+      .. floor(span / 3600 + 0.5) .. " h); it takes 6 scans over 6 hours." }
+  end
+  -- "Now": the price averaged over the last three hours, each scan
+  -- counting for as long as its price stood, so that one odd scan a few
+  -- minutes ago does not decide it.
+  local from = now - S.SIGNAL_RECENT
+  local sum, held = 0, 0
+  for i = #series, 1, -1 do
+    local start = max(series[i][1], from)
+    -- The newest price still stands: it counts for at least half an hour.
+    local stop = series[i + 1] and series[i + 1][1] or max(now, series[i][1] + 1800)
+    if stop > start then
+      sum, held = sum + log(series[i][2]) * (stop - start), held + (stop - start)
+    end
+    if series[i][1] <= from then break end
+  end
+  local recent = held > 0 and exp(sum / held) or last[2]
+  local margin = max(S.SIGNAL_MARGIN, 0.5 * (exp(sqrt(entry.model.s2)) - 1))
+  local ratio = recent / usual - 1
+  return {
+    verdict = ratio >= margin and "good" or (ratio <= -margin and "poor" or "fair"),
+    ratio = ratio, recent = recent, usual = usual, margin = margin, scans = scans, span = span,
+  }
 end
 
 -- The forecast for a moment `days` from now: price, lo, hi (the range it is

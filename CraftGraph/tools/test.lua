@@ -1856,7 +1856,7 @@ do
     }), now + h * 3600)
   end
   s = M.Sales(id)
-  check(s.rate < before / 3 and near(s.days, 7 / 24, 0.01), string.format("six quiet hours bring the rate down: %.0f a day", s.rate))
+  check(s.rate < before / 2.5 and near(s.days, 7 / 24, 0.01), string.format("six quiet hours bring the rate down: %.0f a day", s.rate))
   -- A dear auction that vanishes while cheaper ones stay is hardly counted.
   local dear = M.TrackSales(id, auctions({
     { n = 6, unit = 100, count = 20, owner = "Anna", band = 3 },
@@ -1907,7 +1907,14 @@ do
       "its scale tops out at a round figure: " .. tostring(scale))
     check(chartFrame.demandTop.text:find("/d", 1, true) ~= nil and chartFrame.demandMid.text:find("/d", 1, true) ~= nil,
       "the scale is written in units a day: " .. chartFrame.demandTop.text .. " and " .. chartFrame.demandMid.text)
-    check(chartFrame.flowLabel.text:find("sold a day, now", 1, true) ~= nil, "and the label gives the rate now: " .. chartFrame.flowLabel.text)
+    check(chartFrame.flowLabel.text:find("sold a day, about", 1, true) ~= nil, "and the label gives the rate: " .. chartFrame.flowLabel.text)
+    -- The figure under the chart is the one the card and the panel show.
+    do
+      local turnover = M.Info(id).turnover
+      local shown = turnover >= 10 and tostring(ns.Round(turnover)) or (string.format("%.1f", turnover):gsub("%.0$", ""))
+      check(chartFrame.flowLabel.text:find("about " .. shown, 1, true) ~= nil,
+        "the chart's demand figure is the item's turnover (" .. shown .. "): " .. chartFrame.flowLabel.text)
+    end
     -- An item with a believed rate but no rate history yet gets a level line; one with nothing says what it needs.
     local keep = M.Get(id).sh
     M.Get(id).sh = nil
@@ -2075,6 +2082,64 @@ do
     for i = 1, #was.ladder, 2 do raw[#raw + 1] = { was.ladder[i], was.ladder[i + 1] } end
     ns.Market.Record(product, raw, { full = true, t = now + 400 })
   end
+end
+
+------------------------------------------------------------------------------
+-- Found in the game's own saved data: a full scan arrives in pieces, and a
+-- piece must not be recorded as a scan.
+do
+  local M = ns.Market
+  local a, b = 2604, 2605
+  ns.realm.items[a], ns.realm.items[b] = nil, nil
+  M.Record(b, { { 77, 9 } }, { full = true, t = now - 3600 })
+  local list = { { a, 5, 50 } }
+  local oldNum, oldInfo = C_AuctionHouse.GetNumReplicateItems, C_AuctionHouse.GetReplicateItemInfo
+  C_AuctionHouse.GetNumReplicateItems = function() return #list end
+  C_AuctionHouse.GetReplicateItemInfo = function(i)
+    local r = list[i + 1]
+    return "n", 1, r[2], 1, true, 1, "", 0, 0, r[3], 0, nil, nil, r[4], nil, 0, r[1], true
+  end
+  M.lastFingerprint = nil
+  ns.db.lastFullCount = nil
+  local before = #ns.db.log
+  -- The first piece arrives, then the rest, before the list has settled.
+  FireEvent("REPLICATE_ITEM_LIST_UPDATE")
+  list = { { a, 5, 50, "Anna" }, { a, 5, 55, "Anna" }, { b, 9, 693, "Bo" }, { b, 3, 240, "Bo" }, { b, 3, 240, "Cy" } }
+  FireEvent("REPLICATE_ITEM_LIST_UPDATE")
+  RunTimers()
+  local arrivals = 0
+  for i = before + 1, #ns.db.log do
+    if ns.db.log[i]:find("full scan list arrived", 1, true) then arrivals = arrivals + 1 end
+  end
+  check(arrivals == 1, "a list that arrives in two pieces is read once, when it has settled (" .. arrivals .. ")")
+  local infoB = M.Info(b)
+  check(infoB.price == 77 and infoB.total == 15, "the item in the later piece has its price, not \"none listed\": " .. tostring(infoB.price))
+  local zeros = 0
+  local h = M.History(M.Get(b))
+  for i = 1, #h, 4 do if h[i + 1] == 0 then zeros = zeros + 1 end end
+  check(zeros == 0, "no false \"none listed\" point is written")
+  check(M.Get(b).sn == 2, "the number of sellers is kept apart from the sales count: " .. tostring(M.Get(b).sn))
+  check(ns.db.lastFullCount == 5, "the length of the last complete list is remembered")
+  C_AuctionHouse.GetNumReplicateItems, C_AuctionHouse.GetReplicateItemInfo = oldNum, oldInfo
+  M.lastFingerprint = nil
+
+  -- Old data: false "none listed" points between real prices are removed once.
+  local db = { realms = { R = { items = {
+    [1] = { h = { now - 40000, 3900, 3900, 27, now - 39100, 0, 0, 0, now - 39000, 3900, 3900, 28,
+                  now - 38100, 0, 0, 0, now - 38000, 3900, 3900, 28,
+                  now - 20000, 0, 0, 0, now, 4000, 4000, 5 },
+            v = 343, vn = 0.5, sa = 0, sn = 2.99, sb = 0.01, sl = { "Anna", 5, "Bo", 2 } },
+  } } } }
+  local removed = M.Repair(db)
+  local fixed = db.realms.R.items[1]
+  local all = M.History(fixed)
+  check(removed == 2 and #all / 4 == 5, "two false points go, the real ones stay: " .. removed .. " removed, " .. #all / 4 .. " left")
+  local keptEmpty = false
+  for i = 1, #all, 4 do if all[i] == now - 20000 and all[i + 1] == 0 then keptEmpty = true end end
+  check(keptEmpty, "a \"none listed\" far from any price is believed and kept")
+  check(fixed.v == nil and fixed.sa == nil and fixed.sb == nil and fixed.sn == 2, "turnover built on the pieces starts again; sellers are counted afresh")
+  check(M.Repair(db) == 0 and db.dataVersion == 2, "the repair runs once")
+  ns.realm.items[a], ns.realm.items[b] = nil, nil
 end
 
 ------------------------------------------------------------------------------

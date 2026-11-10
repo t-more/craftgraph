@@ -28,6 +28,17 @@ Sales of auctions arrive at an unknown rate; the belief about it is a Gamma dist
 by every pair of scans (Gamma-Poisson), with evidence fading by half each week. Units follow
 from the average stack sold. The range shown is the middle four fifths.
 
+## One number everywhere
+`Market.Info(id).turnover` is the selling rate every part of the addon shows: cards, side panel,
+chart label, batch sizes. It is the online figure when that source is on and has watched a day;
+else this estimate once an hour has been watched; else a cruder guess from how the price ladder
+moved between two scans.
+
+## A lesson from real data
+The game delivers the full-scan list in pieces. Recording a piece as a scan made everything not
+yet arrived look sold. The list is now read only when it has stopped growing
+(`Market.AwaitReplicate`). Any estimate here is only as good as that.
+
 ## How good is it
 `lua5.1 tools/backtest_sales.lua`, a simulated item with a known rate:
 

@@ -505,7 +505,9 @@ end
 local SALES_MAX_GAP = 12 * 3600       -- scans further apart say too little
 local SALES_MIN_GAP = 4 * 60
 local SALES_HALFLIFE = 7              -- days
-local SALES_PRIOR_UNITS, SALES_PRIOR_DAYS = 0.5, 0.05
+-- Before anything is seen: a tenth of a sale in a tenth of a day, so that
+-- a few minutes without a sale reads as "about one a day", not ten.
+local SALES_PRIOR_UNITS, SALES_PRIOR_DAYS = 0.1, 0.1
 local CANCEL_BASE, CANCEL_RELISTED = 0.10, 0.95
 local SKIPPED_FACTOR = 0.25           -- cheaper ones were left: probably not bought
 local SELLERS_SOLD_KEPT = 12
@@ -684,7 +686,7 @@ function M.TrackSales(id, auctions, now)
   end
   it.sh = sh
   it.sa = (it.sa or 0) * fade + sold               -- units
-  it.sn = (it.sn or 0) * fade + soldStacks         -- auctions: the events that are counted
+  it.sc = (it.sc or 0) * fade + soldStacks         -- auctions: the events that are counted
   it.sb = (it.sb or 0) * fade + days
   if next(bySeller) or it.sq then
     local sq = it.sq or {}
@@ -710,7 +712,7 @@ function M.Sales(id)
   -- What arrives at random is a sale of one auction, whatever its stack,
   -- so the belief is about auctions a day; units follow from the average
   -- stack that sold.
-  local events = it.sn or 0
+  local events = it.sc or 0
   local stack = events > 0.01 and (it.sa or 0) / events or 1
   local alpha, beta = SALES_PRIOR_UNITS + events, SALES_PRIOR_DAYS + it.sb
   -- Gamma quantiles by the Wilson-Hilferty cube: good from alpha of 1 up,
@@ -1067,6 +1069,17 @@ local function ProcessReplicate()
   local tracked = ns.Data.items
   local acc, i = {}, 0
   local function finish()
+    -- The list must be the one that was read: if it grew or shrank while
+    -- we were reading, nothing is recorded and it is read again.
+    local after = C_AuctionHouse.GetNumReplicateItems() or 0
+    if after ~= n then
+      ns.Log("full scan list changed while reading (" .. n .. " to " .. after .. "); reading again")
+      replicateBusy = false
+      M.lastFingerprint = nil
+      M.AwaitReplicate()
+      return
+    end
+    ns.db.lastFullCount = n
     local ids = {}
     for id in pairs(tracked) do ids[#ids + 1] = id end
     local pos, now = 1, time()
@@ -1103,9 +1116,18 @@ local function ProcessReplicate()
     store()
   end
   local getBand = C_AuctionHouse.GetReplicateItemTimeLeft
+  -- Reading is spread over frames. In the foreground a frame gets a few
+  -- milliseconds of it; with the game in the background, where frames are
+  -- seconds apart, each gets much more, so a scan does not take minutes.
+  local clock = debugprofilestop
+  local lastStep = clock and clock() or 0
   local function step()
-    local stop = min(i + 500, n)
+    local began = clock and clock() or 0
+    local budget = (clock and began - lastStep > 150) and 120 or 10
+    lastStep = began
+    local stop = clock and n or min(i + 500, n)
     while i < stop do
+      if clock and i % 200 == 199 and clock() - began > budget then break end
       local _, _, count, _, _, _, _, _, _, buyout, _, _, _, owner, _, _, itemID =
         C_AuctionHouse.GetReplicateItemInfo(i)
       if itemID and tracked[itemID] and buyout and buyout > 0 and count and count > 0 then
@@ -1130,18 +1152,41 @@ local function ProcessReplicate()
   step()
 end
 
--- The game sends this event in bursts; one look per burst is enough.
-local replicateQueued = false
+-- The game sends the list in pieces, with this event after each: a
+-- thousand auctions, then tens of thousands, then the rest. A piece is not
+-- a scan: anything not yet arrived would look like "none listed". So the
+-- list is read only once it has stopped growing: the same length on three
+-- looks a second apart with no event in between. A list much shorter than
+-- the last complete one is given longer before it is believed.
+local replicateWaiting, replicateTouched = false, false
 
-ns.On("REPLICATE_ITEM_LIST_UPDATE", function()
-  if replicateBusy or replicateQueued then return end
-  replicateQueued = true
-  -- Give other addons a moment to read the list first.
-  C_Timer.After(1.5, function()
-    replicateQueued = false
-    if not replicateBusy then ns.Safe(ProcessReplicate) end
-  end)
-end)
+function M.AwaitReplicate()
+  replicateTouched = true
+  if replicateWaiting then return end
+  replicateWaiting = true
+  local lastCount, steady, looks = -1, 0, 0
+  local function look()
+    local count = C_AuctionHouse.GetNumReplicateItems() or 0
+    looks = looks + 1
+    if replicateTouched or count ~= lastCount or replicateBusy then
+      replicateTouched, lastCount, steady = false, count, 0
+    else
+      steady = steady + 1
+    end
+    local short = count < 0.6 * (ns.db.lastFullCount or 0)
+      and time() - (ns.db.lastFullScan or 0) < 3600
+    local needed = short and 20 or 3
+    if steady >= needed or looks > 120 then
+      replicateWaiting = false
+      ns.Safe(ProcessReplicate)
+    else
+      C_Timer.After(1, function() ns.Safe(look) end)
+    end
+  end
+  C_Timer.After(1, function() ns.Safe(look) end)
+end
+
+ns.On("REPLICATE_ITEM_LIST_UPDATE", function() M.AwaitReplicate() end)
 
 -- Seconds until the game allows another full scan (0 = now).
 -- The 15 minute limit is the game's and is shared with Auctionator.
@@ -1302,6 +1347,53 @@ function M.ScanItems(ids)
   M.Pump()
   return true
 end
+
+------------------------------------------------------------------------------
+-- Repairing data from before version 0.2. Full scans used to be recorded
+-- piece by piece, which left "none listed" points between real prices and
+-- made everything look sold; and the sales count shared a field with the
+-- number of sellers. Those traces are removed once.
+------------------------------------------------------------------------------
+function M.Repair(db)
+  if (db.dataVersion or 1) >= 2 then return 0 end
+  local removed = 0
+  for _, realm in pairs(db.realms or {}) do
+    for _, it in pairs(realm.items or {}) do
+      if type(it) == "table" and it.h then
+        local h = M.History(it)
+        local out = {}
+        for i = 1, #h, 4 do
+          -- "None listed" with a real price within forty minutes on either
+          -- side was a piece of a scan, not an empty market.
+          local bogus = h[i + 1] == 0 and h[i - 3] and h[i + 5]
+            and h[i - 3] > 0 and h[i + 5] > 0
+            and h[i] - h[i - 4] < 2400 and h[i + 4] - h[i] < 2400
+          if bogus then
+            removed = removed + 1
+          else
+            local n = #out
+            out[n + 1], out[n + 2], out[n + 3], out[n + 4] = h[i], h[i + 1], h[i + 2], h[i + 3]
+          end
+        end
+        it.h, it.hp, it.hn = out, nil, 0
+        if out[1] then Compact(it, out[#out - 3]) end
+        -- Turnover and sales were built on those pieces: start again.
+        it.v, it.vn, it.sa, it.sc, it.sb, it.sf, it.sh, it.sq, it.au = nil, nil, nil, nil, nil, nil, nil, nil, nil
+        it.sn = it.sl and #it.sl / 2 or nil
+      end
+    end
+  end
+  db.dataVersion = 2
+  return removed
+end
+
+ns.Listen("LOGIN", function()
+  local removed = M.Repair(ns.db)
+  if removed > 0 then
+    ns.Log("repaired history: " .. removed .. " false \"none listed\" points removed")
+    ns.generation = ns.generation + 1
+  end
+end)
 
 ns.On("AUCTION_HOUSE_THROTTLED_SYSTEM_READY", function()
   if #queue > 0 and not waiting then M.Pump() end

@@ -501,20 +501,25 @@ function C.Update(f, id, opts)
         end
         smooth[i] = { times[i], sumSpan > 0 and sumUnits / sumSpan or 0 }
       end
-      local sales = ns.Market.Sales(id)
-      local top = Top(smooth)
+      -- The figure written under the chart is the one the item's card and
+      -- the side panel show, so that they never disagree; the line is how
+      -- the rate has moved.
+      local info = ns.Market.Info(id)
+      local believed = info and info.turnover
+      local atLeast = info and info.sales and info.sales.floor
+      local top = max(Top(smooth), believed or 0)
       local green = { 0.4, 1, 0.4 }
       if #smooth >= 2 and top > 0 then
         top = Nice(top)
         f.demandLines = Curve(smooth, top, green[1], green[2], green[3])
-        parts[#parts + 1] = "|cff66ff66sold a day, now " .. N(smooth[#smooth][2]) .. "|r"
-      elseif sales then
+        parts[#parts + 1] = "|cff66ff66sold a day, about " .. N(believed or smooth[#smooth][2]) .. (atLeast and "+" or "") .. "|r"
+      elseif believed then
         -- One figure so far: a level line at the believed rate.
-        top = Nice(max(sales.rate, 0.1) * 1.5)
-        local y = Height(sales.rate, top)
+        top = Nice(max(believed, 0.1) * 1.5)
+        local y = Height(believed, top)
         Line(X(known), y, X(0), y, green[1], green[2], green[3], 0.75, 1.1)
         f.demandLines = 1
-        parts[#parts + 1] = "|cff66ff66sold a day, about " .. N(sales.rate) .. (sales.floor and "+" or "") .. "|r"
+        parts[#parts + 1] = "|cff66ff66sold a day, about " .. N(believed) .. (atLeast and "+" or "") .. "|r"
       else
         top = nil
         parts[#parts + 1] = "|cffff8c33demand: needs two full scans within 12 h|r"

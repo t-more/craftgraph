@@ -52,3 +52,15 @@ when the version is bumped; see [README.md](README.md).
   instead you are listed first under the players, to show that you are there.
 - Graph: lines are thicker towards the things that earn most among those on screen, and each
   carries the profit of one craft of the thing it leads to.
+- The page buttons along the top keep their names (Graph, Opportunities, Sell bags, Trends, Data)
+  and the one in view is lit; before, the open page's button turned into "Show graph". With no
+  item chosen the window opens on Opportunities.
+- A Data page with four sub-pages: Data sources, Share prices, Online sharing (who shares with
+  you, and the commands to connect from outside the game) and Sales seen.
+- Sales seen: a list of every auction judged sold between full scans (item, stack, price, seller,
+  how sure). Click "Supply and demand" in the side panel for one item's.
+- Price chart: "Show ..." opens tick boxes for a grid with prices and percentages (on by
+  default), change bars, the certainty glow, supply and demand.
+- Clearer words after a review of every screen: "Sell when" (now / any time / wait), "Plan it"
+  everywhere, "costs N to make", "rose" and "fell" in the plan window, "Best amount" with "Set",
+  "usual price". Sources that are not set up or installed no longer show a tick.

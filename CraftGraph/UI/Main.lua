@@ -141,11 +141,18 @@ local function CreatePanel(parent)
   Row("auction", "Auction price")
   Row("supply", "Supply and demand")
   Row("vendor", "Vendor")
+  -- Click the supply and demand line to list this item's sales seen.
+  local salesHit = CreateFrame("Button", nil, p)
+  salesHit:SetPoint("TOPLEFT", p, "TOPLEFT", 12, rowY.supply + 2)
+  salesHit:SetPoint("BOTTOMRIGHT", p, "TOPRIGHT", -12, rowY.supply - 15)
+  salesHit:SetScript("OnClick", function() ns.Safe(UI.ShowSales, true) end)
+  Tip(salesHit, "Sales seen", "Click to list the auctions of this item that were judged sold between full scans.")
+  p.salesHit = salesHit
   Divider()
 
   p.makeHeader = Text(p, "GameFontNormal")
   p.makeHeader:SetPoint("TOPLEFT", 14, y)
-  p.pin = Button(p, "Add to plan", 104)
+  p.pin = Button(p, "Plan it", 104)
   p.pin:SetHeight(19)
   p.pin:SetPoint("TOPRIGHT", p, "TOPRIGHT", -14, y + 3)
   p.pin:SetScript("OnClick", function()
@@ -170,10 +177,10 @@ local function CreatePanel(parent)
   Row("cost", "Materials")
   Row("sale", "Sale")
   Row("profit", "Profit", "GameFontHighlightLarge", 24)
-  Row("best", "Best quantity", nil, nil, 62)
+  Row("best", "Best amount", nil, nil, 62)
   Row("time", "Time to sell")
 
-  p.useBest = Button(p, "Use", 42)
+  p.useBest = Button(p, "Set", 42)
   p.useBest:SetHeight(18)
   p.useBest:SetPoint("TOPRIGHT", p, "TOPRIGHT", -14, rowY.best + 4)
   p.useBest:SetScript("OnClick", function(self)
@@ -195,7 +202,7 @@ local function CreatePanel(parent)
   Divider()
 
   -- One box, two pictures: the price over time, or the price by time of week.
-  local chartHeader = Button(p, "Price history", 88)
+  local chartHeader = Button(p, "Price history", 104)
   chartHeader:SetHeight(18)
   chartHeader:SetPoint("TOPLEFT", 12, y + 3)
   chartHeader:SetScript("OnClick", function()
@@ -214,7 +221,7 @@ local function CreatePanel(parent)
     local d = ns.settings.chartDays or 14
     return d > 0 and (d .. " days") or "All"
   end
-  p.range = Button(p, RangeText(), 52)
+  p.range = Button(p, RangeText(), 62)
   p.range:SetHeight(18)
   p.range:SetPoint("LEFT", chartHeader, "RIGHT", 4, 0)
   p.range:SetScript("OnClick", function(self)
@@ -228,49 +235,62 @@ local function CreatePanel(parent)
   end)
   Tip(p.range, "Chart range",
     "How far back the chart looks: 14 days, 90 days, or everything recorded for this item.")
-  p.certainty = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
-  p.certainty:SetSize(22, 22)
-  p.certainty:SetPoint("TOPRIGHT", -168, y + 5)
-  -- Supply and demand lines on the same chart.
-  p.flow = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
-  p.flow:SetSize(22, 22)
-  p.flow:SetPoint("TOPRIGHT", -116, y + 5)
-  p.flowLabel = Text(p, "GameFontHighlightSmall")
-  p.flowLabel:SetPoint("LEFT", p.flow, "RIGHT", 2, 0)
-  p.flowLabel:SetText("Supply")
-  p.flow:SetScript("OnClick", function(self)
-    ns.settings.chartFlow = self:GetChecked() and true or false
-    UI.Refresh()
-  end)
-  Tip(p.flow, "Supply",
+  -- What the chart draws is chosen in a small panel behind the "Show"
+  -- button, so that the row above the chart stays short. The defaults suit
+  -- a first look: the certainty glow and a grid to read sizes off.
+  p.showButton = Button(p, "Show ...", 70)
+  p.showButton:SetHeight(18)
+  p.showButton:SetPoint("LEFT", p.range, "RIGHT", 4, 0)
+  Tip(p.showButton, "What the chart shows",
+    "Tick what to draw: the certainty glow, a grid to read prices off, bars for how much the price moved "
+    .. "from one period to the next, and the supply and demand lines.")
+  local options = CreateFrame("Frame", nil, p, "BackdropTemplate")
+  options:SetSize(186, 12 + 5 * 22)
+  options:SetPoint("TOPRIGHT", p, "TOPRIGHT", -12, y - 18)
+  options:SetFrameStrata("DIALOG")
+  options:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 12,
+    insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+  options:EnableMouse(true)
+  options:Hide()
+  p.chartOptions = options
+  p.showButton:SetScript("OnClick", function() options:SetShown(not options:IsShown()) end)
+  local optionRow = 0
+  local function Option(setting, text, title, body)
+    local check = CreateFrame("CheckButton", nil, options, "UICheckButtonTemplate")
+    check:SetSize(22, 22)
+    check:SetPoint("TOPLEFT", 6, -6 - optionRow * 22)
+    optionRow = optionRow + 1
+    local label = Text(options, "GameFontHighlightSmall")
+    label:SetPoint("LEFT", check, "RIGHT", 2, 0)
+    label:SetText(text)
+    check.setting = setting
+    check:SetScript("OnClick", function(self)
+      ns.settings[setting] = self:GetChecked() and true or false
+      UI.Refresh()
+    end)
+    Tip(check, title, body)
+    return check, label
+  end
+  p.grid = Option("chartGrid", "Grid with prices", "Grid",
+    "Faint lines at round prices, each with its price and how far it is from the price now, so that "
+    .. "the size of a move can be read off the chart.")
+  p.bars = Option("chartBars", "Change bars", "Change bars",
+    "Small bars along the bottom, one per period: green when the price rose from the period before, "
+    .. "red when it fell, taller for a bigger change. The latest and the biggest carry their figure.")
+  local label
+  p.certainty, label = Option("certainty", "Certainty glow", "Certainty glow",
+    "Shades the chart by how sure the price estimate is: tight and bright near real scans, "
+    .. "wide and faint in gaps and in the forecast.")
+  p.certaintyLabel = label
+  p.flow, p.flowLabel = Option("chartFlow", "Supply (units listed)", "Supply",
     "Adds a blue line to the price chart: how many were listed at each scan, on its own scale from "
     .. "nothing to the most seen. A price that falls while this line climbs is goods piling up.")
-  -- Demand: units sold a day, with its scale in units a day.
-  p.demand = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
-  p.demand:SetSize(22, 22)
-  p.demand:SetPoint("TOPRIGHT", -54, y + 5)
-  p.demandLabel = Text(p, "GameFontHighlightSmall")
-  p.demandLabel:SetPoint("LEFT", p.demand, "RIGHT", 2, 0)
-  p.demandLabel:SetText("Demand")
-  p.demand:SetScript("OnClick", function(self)
-    ns.settings.chartDemand = self:GetChecked() and true or false
-    UI.Refresh()
-  end)
-  Tip(p.demand, "Demand",
+  p.demand, p.demandLabel = Option("chartDemand", "Demand (sold a day)", "Demand",
     "Adds a green line to the price chart: how many sold a day, judged from the auctions that "
     .. "vanished between full scans and evened out over a stretch of time. Its scale is at the "
     .. "right edge in units a day. It needs two full scans within twelve hours to start.")
-  local label = Text(p, "GameFontHighlightSmall")
-  label:SetPoint("LEFT", p.certainty, "RIGHT", 2, 0)
-  label:SetText("Glow")
-  p.certaintyLabel = label
-  p.certainty:SetScript("OnClick", function(self)
-    ns.settings.certainty = self:GetChecked() and true or false
-    UI.Refresh()
-  end)
-  Tip(p.certainty, "Certainty glow",
-    "Shades the chart by how sure the price estimate is: tight and bright near real scans, "
-    .. "wide and faint in gaps and in the forecast.")
+  p.chartChecks = { p.grid, p.bars, p.certainty, p.flow, p.demand }
   y = y - 20
 
   chart = ns.Chart.Create(p)
@@ -365,7 +385,7 @@ local function UpdatePanel()
   end
   p.name:SetTextColor(r, g, b)
 
-  p.pin:SetText(ns.Jobs.IsPinned(id) and "Remove from plan" or "Add to plan")
+  p.pin:SetText(ns.Jobs.IsPinned(id) and "Remove from plan" or "Plan it")
 
   local craftable = ns.Opt.IsCraftable(id)
   if craftable then
@@ -480,27 +500,24 @@ local function UpdatePanel()
   end
   p.warn:SetText(table.concat(warn, " "))
 
-  p.certainty:SetChecked(ns.settings.certainty)
+  for _, check in ipairs(p.chartChecks) do
+    check:SetChecked(ns.settings[check.setting] and true or false)
+  end
   local picture = ns.settings.sideChart or "history"
   local weekPicture = picture == "week" or picture == "day"
   p.chartMode:SetText(picture == "week" and "Week pattern" or picture == "day" and "Day pattern" or "Price history")
   p.week.mode = picture == "day" and "day" or "week"
   p.range:SetShown(not weekPicture)
-  p.certainty:SetShown(not weekPicture)
-  p.certaintyLabel:SetShown(not weekPicture)
-  p.flow:SetShown(not weekPicture)
-  p.flowLabel:SetShown(not weekPicture)
-  p.flow:SetChecked(ns.settings.chartFlow and true or false)
-  p.demand:SetShown(not weekPicture)
-  p.demandLabel:SetShown(not weekPicture)
-  p.demand:SetChecked(ns.settings.chartDemand and true or false)
+  p.showButton:SetShown(not weekPicture)
+  if weekPicture then p.chartOptions:Hide() end
   chart:SetShown(not weekPicture)
   p.week:SetShown(weekPicture)
   if weekPicture then
     UI.UpdateWeekStrip(p.week, id)
   else
     chart:Update(id, { band = ns.settings.certainty, craft = unitCraft, vendor = ns.VendorSell(id),
-      days = ns.settings.chartDays, flow = ns.settings.chartFlow, demand = ns.settings.chartDemand })
+      days = ns.settings.chartDays, flow = ns.settings.chartFlow, demand = ns.settings.chartDemand,
+      grid = ns.settings.chartGrid, bars = ns.settings.chartBars })
   end
   local nextStep = ""
   if state.job and state.job.text then
@@ -679,11 +696,11 @@ local FILTERS = {
 -- list ("now", "ok", "wait", or a dash when there is too little to say or
 -- the sale is to a vendor), and sentences for the tooltip.
 function UI.SellSignalText(d)
-  if not d.id or d.kind == "tovendor" or d.kind == "bags" then return "" end
+  if not d.id or d.kind == "tovendor" or d.kind == "bags" or d.kind == "later" then return "" end
   local signal = ns.Stats.SellSignal(d.id)
   if signal.verdict == "good" then return "|cff40ff40now|r" end
   if signal.verdict == "poor" then return "|cffff8c33wait|r" end
-  if signal.verdict == "fair" then return GREY .. "ok|r" end
+  if signal.verdict == "fair" then return GREY .. "any time|r" end
   return GREY .. "-|r"
 end
 
@@ -698,7 +715,7 @@ function UI.SellSignalLines(id)
     or signal.verdict == "poor" and { "Not a good time to sell", 1, 0.55, 0.2 }
     or { "A fair time to sell", 0.8, 0.8, 0.8 }
   local lines = { { head[1] .. ": the last three hours average " .. ns.Money(signal.recent) .. ", "
-    .. (pct == 0 and "right at" or (pct .. "% " .. (over and "over" or "under"))) .. " its middle price of "
+    .. (pct == 0 and "right at" or (pct .. "% " .. (over and "over" or "under"))) .. " its usual price of "
     .. ns.Money(signal.usual) .. " over the last " .. period .. " (" .. signal.scans .. " scans).", head[2], head[3], head[4] } }
   -- A better hour ahead, where a forecast is worth having.
   local best = ns.Jobs.BestMoment(id)
@@ -920,7 +937,7 @@ local function CreateWorth(parent)
     { key = "outlay", text = "Costs up front", right = 522, justify = "RIGHT", width = 96 },
     { key = "profit", text = "Profit", right = 642, justify = "RIGHT", width = 100 },
     { key = "effort", text = "Steps", right = 680, justify = "RIGHT", width = 36 },
-    { key = "signal", text = "Sell?", right = 718, justify = "RIGHT", width = 36 },
+    { key = "signal", text = "Sell when", right = 722, justify = "RIGHT", width = 52 },
   }
   for _, c in ipairs(COLS) do
     local h = CreateFrame("Button", nil, f)
@@ -1124,7 +1141,7 @@ function UI.UpdateWorth()
       row.kind:SetText(d.how or Deals.KIND[d.kind])
       row.kind:SetTextColor(t[1], t[2], t[3])
       row.qty:SetText(d.kind == "bags" and "" or ("x" .. ns.Round(d.qty)))
-      row.outlay:SetText(d.outlay > 0 and ns.Money(d.outlay) or (GREY .. "nothing|r"))
+      row.outlay:SetText(d.kind == "later" and "" or (d.outlay > 0 and ns.Money(d.outlay) or (GREY .. "nothing|r")))
       row.profit:SetText((d.kind == "later" and d.when.hours == 0) and (GREY .. "sell now|r")
         or "|cff40ff40+" .. ns.Money(d.profit) .. "|r"
         .. (d.sd > 0 and (GREY .. " \194\177" .. min(999, ns.Round(100 * d.sd / max(d.profit, 1))) .. "%|r") or ""))
@@ -1145,7 +1162,8 @@ function UI.UpdateWorth()
     worth.more:SetText((worth.offset + 1) .. " to " .. min(#sorted, worth.offset + WORTH_ROWS)
       .. " of " .. #sorted .. ". Scroll for more.")
   else
-    worth.more:SetText("Faded rows are not certain to pay. Hover a row for the steps it takes.")
+    worth.more:SetText("Faded rows are not sure to pay. Sell when: now = the price is high, wait = it is low, "
+      .. "any time = about usual. Hover a row for the steps.")
   end
 end
 
@@ -2309,7 +2327,51 @@ function UI.UpdateTrends()
 end
 
 -- The main area shows one of four things: "graph", "worth", "sell" or "trends".
+-- The Data page: its sub-pages are picked with the buttons along its top.
+local dataPage, dataButton, graphButton
+local dataTab = "sources"
+local DATA_TABS = {
+  { key = "sources", text = "Data sources", width = 112 },
+  { key = "share", text = "Share prices", width = 104 },
+  { key = "github", text = "Online sharing", width = 112 },
+  { key = "sales", text = "Sales seen", width = 100 },
+}
+
+local function CreateDataPage(parent)
+  local f = CreateFrame("Frame", nil, parent)
+  f:SetPoint("TOPLEFT", 3, -3)
+  f:SetPoint("BOTTOMRIGHT", -3, 3)
+  f:Hide()
+  local bg = f:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints()
+  bg:SetColorTexture(0.05, 0.04, 0.03, 0.92)
+  f:EnableMouse(true)
+  f:SetScript("OnMouseUp", function(_, button) UI.NavButton(button) end)
+  f.tabs, f.panes = {}, {}
+  local x = 12
+  for _, def in ipairs(DATA_TABS) do
+    local b = Button(f, def.text, def.width)
+    b:SetHeight(21)
+    b:SetPoint("TOPLEFT", x, -10)
+    b:SetScript("OnClick", function() ns.Safe(UI.SelectDataTab, def.key) end)
+    f.tabs[def.key] = b
+    x = x + def.width + 4
+    local pane = CreateFrame("Frame", nil, f)
+    pane:SetPoint("TOPLEFT", 0, -38)
+    pane:SetPoint("BOTTOMRIGHT", 0, 0)
+    pane:Hide()
+    f.panes[def.key] = pane
+  end
+  local line = f:CreateTexture(nil, "ARTWORK")
+  line:SetColorTexture(1, 0.82, 0, 0.3)
+  line:SetHeight(1)
+  line:SetPoint("TOPLEFT", 10, -35)
+  line:SetPoint("TOPRIGHT", -10, -35)
+  return f
+end
+
 local function CurrentMode()
+  if dataPage and dataPage:IsShown() then return "data" end
   if worth and worth:IsShown() then return "worth" end
   if sell and sell:IsShown() then return "sell" end
   if trends and trends:IsShown() then return "trends" end
@@ -2321,10 +2383,14 @@ local function SetMode(mode)
   worth:SetShown(mode == "worth")
   sell:SetShown(mode == "sell")
   trends:SetShown(mode == "trends")
+  dataPage:SetShown(mode == "data")
+  if mode == "data" then ns.Safe(UI.SelectDataTab, dataTab) end
   view:SetShown(mode == "graph")
-  worthButton:SetText(mode == "worth" and "Show graph" or "Opportunities")
-  sellButton:SetText(mode == "sell" and "Show graph" or "Sell bags")
-  trendsButton:SetText(mode == "trends" and "Show graph" or "Trends")
+  -- The page buttons keep their names; the one in view is lit.
+  for key, button in pairs({ graph = graphButton, worth = worthButton, sell = sellButton, trends = trendsButton, data = dataButton }) do
+    if key == mode then button:LockHighlight() else button:UnlockHighlight() end
+  end
+  UI.mode = mode
   if mode == "trends" then ns.Safe(UI.UpdateTrends) end
   if mode == "worth" then
     worth.offset = 0
@@ -2619,7 +2685,7 @@ function UI.GoalText(pin)
   local text = "Profit " .. Signed(Short(st.last))
   local moved = st.last - (st.n >= 2 and st.prev or st.first)
   if st.n >= 2 and math.abs(moved) >= 1 then
-    text = text .. (moved < 0 and " |cffff5040down " or " |cff40ff40up ") .. ns.Money(math.abs(Short(moved))) .. "|r"
+    text = text .. (moved < 0 and " |cffff5040fell " or " |cff40ff40rose ") .. ns.Money(math.abs(Short(moved))) .. "|r"
   end
   if st.n >= 3 then
     text = text .. GREY .. "  med|r " .. Signed(Short(st.median)) .. GREY .. "  avg|r " .. Signed(Short(st.mean))
@@ -3078,8 +3144,13 @@ local function Create()
     end
   end)
   UI.UpdateAutoLabel()
-  worthButton = Button(frame, "Opportunities", 112)
-  worthButton:SetPoint("LEFT", fullButton, "RIGHT", 6, 0)
+  -- The pages, in a row; the one in view is lit.
+  graphButton = Button(frame, "Graph", 62)
+  graphButton:SetPoint("LEFT", fullButton, "RIGHT", 14, 0)
+  graphButton:SetScript("OnClick", function() UI.ShowGraph() end)
+  Tip(graphButton, "Graph", "What the chosen item is made from and used in, with prices on every step.")
+  worthButton = Button(frame, "Opportunities", 108)
+  worthButton:SetPoint("LEFT", graphButton, "RIGHT", 4, 0)
   worthButton:SetScript("OnClick", function() UI.ShowWorth() end)
   Tip(worthButton, "Opportunities",
     "Every way to make money right now: crafting what you know, buying low to relist, buying under "
@@ -3091,6 +3162,12 @@ local function Create()
   trendsButton = Button(frame, "Trends", 76)
   trendsButton:SetPoint("LEFT", sellButton, "RIGHT", 6, 0)
   trendsButton:SetScript("OnClick", function() UI.ShowTrends() end)
+  dataButton = Button(frame, "Data", 56)
+  dataButton:SetPoint("LEFT", trendsButton, "RIGHT", 4, 0)
+  dataButton:SetScript("OnClick", function() ns.Safe(UI.ShowData) end)
+  Tip(dataButton, "Data",
+    "Where prices come from and go to: switch data sources on and off, import and export prices, "
+    .. "the shared repository on GitHub, and the list of sales seen between scans.")
   Tip(trendsButton, "Trends",
     "Patterns for the chosen item that show over time: its price or supply by hour of day or day of "
     .. "week, how listings are stacked, and who sells it.")
@@ -3109,6 +3186,7 @@ local function Create()
   worth = CreateWorth(inset)
   sell = CreateSell(inset)
   trends = CreateTrends(inset)
+  dataPage = CreateDataPage(inset)
 
   panel = CreatePanel(frame)
 
@@ -3242,6 +3320,9 @@ function UI.Open(item)
     end
     if not state.center and ns.settings.lastItem then state.center = ns.settings.lastItem end
     frame:Show()
+    -- With no item chosen yet there is nothing to draw: start on the list
+    -- of what pays now.
+    if not state.center then UI.ShowWorth(true, true) end
   end
   frame:Raise()
 end
@@ -3420,6 +3501,7 @@ local SOURCES = {
       if ns.Online then return "switched off" end
       return "not set up (optional, needs Python)"
     end,
+    there = function() return ns.Online and ns.Online ~= false and ns.Online.realm == ns.realmKey end,
     tip = "Prices, depth and sales from Blizzard's hourly auction data, brought in by the optional sync "
       .. "tool. Used where it is newer than your own scan." },
   { key = "Shared", text = "Prices shared by another player",
@@ -3434,6 +3516,7 @@ local SOURCES = {
       .. "data repository). Used where they are newer than your own scan, and never mixed into your "
       .. "own history. Each player below has a switch of their own." },
   { key = "Auctionator", text = "Auctionator's prices",
+    there = function() return _G.Auctionator ~= nil end,
     note = function() return _G.Auctionator and "installed" or "not installed" end,
     tip = "Auctionator's last price for items you have not scanned here, and its older daily history." },
   { key = "Sales", text = "Sales seen between full scans",
@@ -3460,7 +3543,10 @@ local PEOPLE_ROWS = 8
 local function UpdateSources()
   if not sourcesFrame then return end
   for _, row in ipairs(sourcesFrame.rows) do
-    row.check:SetChecked(ns.Market.Source(row.def.key))
+    -- A source that is not there cannot be on: no tick, and the reason.
+    local there = not row.def.there or row.def.there()
+    row.check:SetChecked(there and ns.Market.Source(row.def.key))
+    row.check:SetEnabled(there)
     row.note:SetText(GREY .. row.def.note() .. "|r")
   end
   -- One line per player whose prices are held, each with its own switch.
@@ -3491,20 +3577,15 @@ local function UpdateSources()
   sourcesFrame.guess:SetChecked(ns.settings.showGuesses and true or false)
 end
 
-function UI.ToggleSources()
+local function BuildSources()
   if not sourcesFrame then
-    local f = CreateFrame("Frame", "CraftGraphSources", UIParent, "BackdropTemplate")
+    local f = CreateFrame("Frame", "CraftGraphSources", dataPage.panes.sources, "BackdropTemplate")
     f:SetSize(330, 62 + #SOURCES * 38)
-    f:SetPoint("CENTER", 0, 80)
-    f:SetFrameStrata("DIALOG")
+    f:SetPoint("TOPLEFT", 12, -8)
     f:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
       edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
       insets = { left = 3, right = 3, top = 3, bottom = 3 } })
     f:EnableMouse(true)
-    f:SetMovable(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", f.StopMovingOrSizing)
     local title = Text(f, "GameFontNormal")
     title:SetPoint("TOPLEFT", 12, -10)
     title:SetText("Data sources")
@@ -3514,8 +3595,6 @@ function UI.ToggleSources()
     own:SetPoint("TOPRIGHT", -12, -30)
     own:SetWordWrap(true)
     own:SetMaxLines(2)
-    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-    close:SetPoint("TOPRIGHT", 2, 2)
     f.rows = {}
     for i, def in ipairs(SOURCES) do
       local y = -58 - (i - 1) * 38
@@ -3548,14 +3627,14 @@ function UI.ToggleSources()
       .. "Tick this to see them everywhere, for curiosity.")
     local glabel = Text(f, "GameFontHighlight")
     glabel:SetPoint("TOPLEFT", guess, "TOPRIGHT", 2, -2)
-    glabel:SetText("Show forecasts that are only guesses")
+    glabel:SetText("Display: show forecasts that are only guesses")
     local gnote = Text(f, "GameFontDisableSmall")
     gnote:SetPoint("TOPLEFT", glabel, "BOTTOMLEFT", 0, -2)
     gnote:SetText("off: hidden where they would mislead")
     f.guess = guess
     f.baseHeight = 62 + (#SOURCES + 1) * 38 + 30
     f:SetHeight(f.baseHeight)
-    f:SetWidth(400)
+    f:SetWidth(560)
     -- Players whose shared prices are held.
     local py = -58 - (#SOURCES + 1) * 38 - 4
     f.peopleTitle = Text(f, "GameFontNormalSmall")
@@ -3569,7 +3648,7 @@ function UI.ToggleSources()
       check:SetPoint("TOPLEFT", 12, y)
       local label = Text(f, "GameFontHighlightSmall")
       label:SetPoint("LEFT", check, "RIGHT", 2, 0)
-      label:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+      label:SetWidth(500)
       label:SetWordWrap(false)
       local row = { check = check, label = label }
       check:SetScript("OnClick", function(self)
@@ -3582,15 +3661,13 @@ function UI.ToggleSources()
     f.morePeople:SetPoint("TOPLEFT", 16, py - 18 - PEOPLE_ROWS * 20)
     local share = Button(f, "Share prices ...", 130)
     share:SetPoint("BOTTOMLEFT", 12, 10)
-    share:SetScript("OnClick", function() ns.Safe(UI.ShowShare, "export") end)
+    share:SetScript("OnClick", function() ns.Safe(UI.SelectDataTab, "share") end)
     Tip(share, "Share prices", "Export the prices of your latest scans as text for another player, or "
       .. "import what another player sent you.")
-    tinsert(UISpecialFrames, "CraftGraphSources")
-    f:Hide()
     sourcesFrame = f
     UI.sourcesFrame = f
   end
-  sourcesFrame:SetShown(not sourcesFrame:IsShown())
+  sourcesFrame:Show()
   UpdateSources()
 end
 
@@ -3636,20 +3713,15 @@ function UI.ShareImport()
   return result
 end
 
-function UI.ShowShare(mode)
+local function BuildShare()
   if not shareFrame then
-    local f = CreateFrame("Frame", "CraftGraphShare", UIParent, "BackdropTemplate")
-    f:SetSize(520, 330)
-    f:SetPoint("CENTER", 0, 40)
-    f:SetFrameStrata("DIALOG")
+    local f = CreateFrame("Frame", "CraftGraphShare", dataPage.panes.share, "BackdropTemplate")
+    f:SetSize(620, 420)
+    f:SetPoint("TOPLEFT", 12, -8)
     f:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
       edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 14,
       insets = { left = 3, right = 3, top = 3, bottom = 3 } })
     f:EnableMouse(true)
-    f:SetMovable(true)
-    f:RegisterForDrag("LeftButton")
-    f:SetScript("OnDragStart", f.StartMoving)
-    f:SetScript("OnDragStop", f.StopMovingOrSizing)
     local title = Text(f, "GameFontNormal")
     title:SetPoint("TOPLEFT", 12, -10)
     title:SetText("Share prices")
@@ -3660,8 +3732,6 @@ function UI.ShowShare(mode)
     help:SetMaxLines(2)
     help:SetText("Export puts the prices of your scans from the last day in the box as text, to copy and send. "
       .. "To take in what someone sent you, paste it into the box and press Import.")
-    local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-    close:SetPoint("TOPRIGHT", 2, 2)
 
     local scroll = CreateFrame("ScrollFrame", "CraftGraphShareScroll", f, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", 14, -64)
@@ -3674,7 +3744,7 @@ function UI.ShowShare(mode)
     box:SetMultiLine(true)
     box:SetAutoFocus(false)
     box:SetFontObject("GameFontHighlightSmall")
-    box:SetWidth(460)
+    box:SetWidth(560)
     box:SetMaxLetters(0)
     box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
     scroll:SetScrollChild(box)
@@ -3699,12 +3769,16 @@ function UI.ShowShare(mode)
       ns.Market.ClearShared()
       ShareSay("Shared prices forgotten: only your own scans and the other sources are used.", nil)
     end)
-    tinsert(UISpecialFrames, "CraftGraphShare")
-    f:Hide()
     shareFrame = f
     UI.shareFrame = f
   end
   shareFrame:Show()
+end
+
+-- Opens the import and export page. mode "import": an empty box to paste
+-- into; otherwise the player's prices are exported into the box.
+function UI.ShowShare(mode)
+  UI.ShowData("share")
   forceNext = false
   if mode == "import" then
     shareFrame.box:SetText("")
@@ -3715,6 +3789,322 @@ function UI.ShowShare(mode)
     UI.ShareExport()
   end
 end
+
+------------------------------------------------------------------------------
+-- The GitHub page: the game cannot reach the internet, so this page says
+-- what is here, who is sharing, and what to run outside the game.
+------------------------------------------------------------------------------
+local githubPane
+local DATA_REPO = "https://github.com/t-more/craftgraph-data"
+
+local function CopyBox(parent, y, label, text)
+  local l = Text(parent, "GameFontHighlightSmall")
+  l:SetPoint("TOPLEFT", 16, y)
+  l:SetPoint("TOPRIGHT", -16, y)
+  l:SetWordWrap(true)
+  l:SetMaxLines(2)
+  l:SetText(label)
+  local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
+  box:SetSize(560, 20)
+  box:SetPoint("TOPLEFT", 22, y - 30)
+  box:SetAutoFocus(false)
+  box:SetText(text)
+  -- The text is there to be copied, not changed.
+  box:SetScript("OnTextChanged", function(self, user) if user then self:SetText(text) end end)
+  box:SetScript("OnEditFocusGained", function(self) if self.HighlightText then self:HighlightText() end end)
+  box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+  return box
+end
+
+local function BuildGitHub()
+  if githubPane then return end
+  local f = dataPage.panes.github
+  githubPane = f
+  UI.githubPane = f
+  f.title = Text(f, "GameFontNormal")
+  f.title:SetPoint("TOPLEFT", 16, -10)
+  f.title:SetText("Prices shared on GitHub (optional)")
+  f.intro = Text(f, "GameFontHighlightSmall")
+  f.intro:SetPoint("TOPLEFT", 16, -30)
+  f.intro:SetPoint("TOPRIGHT", -16, -30)
+  f.intro:SetWordWrap(true)
+  f.intro:SetMaxLines(3)
+  f.intro:SetSpacing(2)
+  f.intro:SetText("Players who want to can pool the prices of their latest scans in one public place, each "
+    .. "under their character's name. The game cannot reach the internet, so a small optional program "
+    .. "on your computer does the fetching and sharing, and the game takes it in when you log in. "
+    .. "Without it nothing here changes: everything else is local.")
+  f.status = Text(f, "GameFontHighlight")
+  f.status:SetPoint("TOPLEFT", 16, -84)
+  f.status:SetPoint("TOPRIGHT", -16, -84)
+  f.status:SetWordWrap(true)
+  f.status:SetMaxLines(2)
+  f.people = Text(f, "GameFontHighlightSmall")
+  f.people:SetPoint("TOPLEFT", 16, -122)
+  f.people:SetPoint("TOPRIGHT", -16, -122)
+  f.people:SetWordWrap(true)
+  f.people:SetMaxLines(4)
+  f.people:SetSpacing(2)
+  f.people:SetJustifyV("TOP")
+  local head = Text(f, "GameFontNormal")
+  head:SetPoint("TOPLEFT", 16, -196)
+  head:SetText("To connect (outside the game; click a box and press Ctrl+C to copy)")
+  f.boxes = {
+    CopyBox(f, -218, "1. The shared place. Open it to see who shares, and to ask to be let in:", DATA_REPO),
+    CopyBox(f, -276, "2. Fetch what others share. Needs Python 3, no account. Run in the CraftGraph addon folder:",
+      "python3 sync/craftgraph_sync.py data-pull"),
+    CopyBox(f, -334, "3. Share yours as well. Needs the GitHub CLI logged in (gh auth login) and the owner's go-ahead:",
+      "python3 sync/craftgraph_sync.py data-sync"),
+  }
+  f.note = Text(f, "GameFontDisableSmall")
+  f.note:SetPoint("TOPLEFT", 16, -396)
+  f.note:SetPoint("TOPRIGHT", -16, -396)
+  f.note:SetWordWrap(true)
+  f.note:SetMaxLines(3)
+  f.note:SetText("Sharing makes public: your character's name, your GitHub name, and the prices from your scans "
+    .. "of the last day. Each player you fetch has a switch of their own on the Data sources page, and your "
+    .. "own prices are never imported back.")
+end
+
+function UI.UpdateGitHub()
+  BuildGitHub()
+  local f = githubPane
+  local people = ns.Market.Contributors()
+  local me, others, names = nil, 0, {}
+  for _, c in ipairs(people) do
+    if c.self then
+      me = c
+    else
+      others = others + 1
+      names[#names + 1] = c.name .. GREY .. " (" .. c.items .. ", " .. ns.Age(time() - (c.made or 0)) .. ")|r"
+    end
+  end
+  if me then
+    f.status:SetText("|cff66ff66You are sharing|r as " .. me.name .. (me.github and (" (GitHub: " .. me.github .. ")") or "")
+      .. ": " .. me.items .. " prices, scanned " .. ns.Age(time() - (me.made or 0)) .. ".")
+  elseif others > 0 then
+    f.status:SetText("You are fetching what others share. Your own prices are not seen among them.")
+  else
+    f.status:SetText("|cffff8c33Not connected:|r nothing has been fetched yet. The steps are below.")
+  end
+  if others > 0 then
+    f.people:SetText(others .. (others == 1 and " player" or " players") .. " fetched: " .. table.concat(names, ", ")
+      .. ". Their switches are on the Data sources page.")
+  else
+    f.people:SetText(GREY .. "No other player's prices are held.|r")
+  end
+  f.others, f.me = others, me
+end
+
+------------------------------------------------------------------------------
+-- Sales seen: the auctions judged sold between full scans, newest first.
+-- For one item (from the side panel) or for everything.
+------------------------------------------------------------------------------
+local salesPane
+local salesOnlyItem = false
+local SALES_ROWS = 22
+
+local function BuildSales()
+  if salesPane then return end
+  local f = dataPage.panes.sales
+  salesPane = f
+  UI.salesPane = f
+  f.summary = Text(f, "GameFontNormal")
+  f.summary:SetPoint("TOPLEFT", 16, -8)
+  f.filter = Button(f, "This item only", 130)
+  f.filter:SetHeight(19)
+  f.filter:SetPoint("TOPRIGHT", -14, -6)
+  f.filter:SetScript("OnClick", function()
+    salesOnlyItem = not salesOnlyItem
+    f.offset = 0
+    UI.UpdateSalesList()
+  end)
+  Tip(f.filter, "Which sales", "Switches between the sales of the item in focus and the sales of everything.")
+  f.note = Text(f, "GameFontHighlightSmall")
+  f.note:SetPoint("TOPLEFT", 16, -28)
+  f.note:SetPoint("TOPRIGHT", -16, -28)
+  f.note:SetWordWrap(false)
+  local COLS = {
+    { text = "Found gone", x = 16, w = 90 }, { text = "Item", x = 112, w = 230 },
+    { text = "Amount", right = 400, w = 50 }, { text = "Each", right = 490, w = 80 },
+    { text = "In all", right = 590, w = 90 }, { text = "Seller", x = 606, w = 110 }, { text = "Sure", right = 780, w = 40 },
+  }
+  for _, c in ipairs(COLS) do
+    local h = Text(f, "GameFontNormalSmall", c.right and "RIGHT" or "LEFT")
+    h:SetWidth(c.w)
+    if c.x then h:SetPoint("TOPLEFT", c.x, -50) else h:SetPoint("TOPRIGHT", f, "TOPLEFT", c.right, -50) end
+    h:SetText(c.text)
+  end
+  local line = f:CreateTexture(nil, "ARTWORK")
+  line:SetColorTexture(1, 0.82, 0, 0.3)
+  line:SetHeight(1)
+  line:SetPoint("TOPLEFT", 10, -66)
+  line:SetPoint("TOPRIGHT", -10, -66)
+  f.rows = {}
+  for i = 1, SALES_ROWS do
+    local row = CreateFrame("Button", nil, f)
+    row:SetHeight(20)
+    local y = -70 - (i - 1) * 20
+    row:SetPoint("TOPLEFT", 8, y)
+    row:SetPoint("TOPRIGHT", -8, y)
+    row.when = Text(row, "GameFontDisableSmall")
+    row.when:SetPoint("LEFT", 8, 0)
+    row.when:SetWidth(90)
+    row.when:SetWordWrap(false)
+    row.icon = row:CreateTexture(nil, "ARTWORK")
+    row.icon:SetSize(16, 16)
+    row.icon:SetPoint("LEFT", 104, 0)
+    row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    row.name = Text(row, "GameFontHighlightSmall")
+    row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
+    row.name:SetWidth(210)
+    row.name:SetWordWrap(false)
+    row.count = Text(row, "GameFontHighlightSmall", "RIGHT")
+    row.count:SetPoint("RIGHT", row, "LEFT", 392, 0)
+    row.each = Text(row, "GameFontHighlightSmall", "RIGHT")
+    row.each:SetPoint("RIGHT", row, "LEFT", 482, 0)
+    row.total = Text(row, "GameFontHighlightSmall", "RIGHT")
+    row.total:SetPoint("RIGHT", row, "LEFT", 582, 0)
+    row.seller = Text(row, "GameFontHighlightSmall")
+    row.seller:SetPoint("LEFT", row, "LEFT", 598, 0)
+    row.seller:SetWidth(110)
+    row.seller:SetWordWrap(false)
+    row.sure = Text(row, "GameFontDisableSmall", "RIGHT")
+    row.sure:SetPoint("RIGHT", row, "LEFT", 772, 0)
+    local hl = row:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(1, 0.82, 0, 0.12)
+    row:RegisterForClicks("LeftButtonUp", "Button4Up", "Button5Up")
+    row:SetScript("OnClick", function(self, button)
+      if UI.NavButton(button) then return end
+      if self.data then
+        UI.Remember()
+        SetMode("graph")
+        UI.Focus(self.data.id)
+      end
+    end)
+    f.rows[i] = row
+  end
+  f.more = Text(f, "GameFontDisableSmall")
+  f.more:SetPoint("BOTTOMLEFT", 14, 8)
+  f.offset = 0
+  f:EnableMouseWheel(true)
+  f:SetScript("OnMouseWheel", function(_, delta)
+    f.offset = max(0, f.offset - delta * 3)
+    UI.UpdateSalesList()
+  end)
+end
+
+function UI.UpdateSalesList()
+  BuildSales()
+  local f = salesPane
+  local focus = state.center
+  local only = salesOnlyItem and focus
+  local list = ns.Market.SalesLog(only or nil)
+  f.filter:SetText(only and "Show all items" or "This item only")
+  f.filter:SetEnabled(focus ~= nil or salesOnlyItem)
+  local dayUnits, dayValue, day = 0, 0, time() - 86400
+  for _, e in ipairs(list) do
+    if e.t >= day then dayUnits, dayValue = dayUnits + e.count, dayValue + e.count * e.unit end
+  end
+  f.summary:SetText("Sales seen" .. (only and (": " .. ns.ItemName(only)) or "") .. "  |cffffffff" .. #list .. "|r"
+    .. GREY .. (dayUnits > 0 and ("  (last 24 h: " .. dayUnits .. " units, " .. ns.Money(dayValue) .. "|r" .. GREY .. ")|r") or "|r"))
+  if not ns.Market.Source("Sales") then
+    f.note:SetText("|cffff8c33Sales seen between full scans is switched off on the Data sources page.|r")
+  elseif #list == 0 then
+    f.note:SetText(GREY .. "None yet. A sale is seen when an auction is there at one full scan and gone at the next, "
+      .. "and was not about to run out or relisted.|r")
+  else
+    f.note:SetText(GREY .. "Auctions that were there at one full scan and gone at the next, and more likely sold than not. "
+      .. "\"Sure\" is how likely. Click a row to open the item.|r")
+  end
+  f.offset = min(f.offset, max(0, #list - SALES_ROWS))
+  for i = 1, SALES_ROWS do
+    local row, e = f.rows[i], list[i + f.offset]
+    row.data = e
+    if e then
+      local r, g, b = ns.ItemColor(e.id)
+      row.when:SetText(ns.Age(time() - e.t))
+      row.icon:SetTexture(ns.ItemIcon(e.id))
+      row.name:SetText(ns.ItemName(e.id))
+      row.name:SetTextColor(r, g, b)
+      row.count:SetText("x" .. e.count)
+      row.each:SetText(ns.Money(e.unit))
+      row.total:SetText(ns.Money(e.unit * e.count))
+      row.seller:SetText(e.owner ~= "" and e.owner or (GREY .. "unknown|r"))
+      row.sure:SetText(ns.Round(e.sure * 100) .. "%")
+      row:Show()
+    else
+      row:Hide()
+    end
+  end
+  f.more:SetText(#list > SALES_ROWS and ((f.offset + 1) .. " to " .. min(#list, f.offset + SALES_ROWS) .. " of " .. #list
+    .. ". Scroll for more.") or "")
+  f.count = #list
+end
+
+------------------------------------------------------------------------------
+-- Opening the Data page and its sub-pages
+------------------------------------------------------------------------------
+function UI.SelectDataTab(tab)
+  if not dataPage then return end
+  dataTab = dataPage.panes[tab] and tab or "sources"
+  for key, pane in pairs(dataPage.panes) do
+    pane:SetShown(key == dataTab)
+    if key == dataTab then dataPage.tabs[key]:LockHighlight() else dataPage.tabs[key]:UnlockHighlight() end
+  end
+  if dataTab == "sources" then
+    BuildSources()
+  elseif dataTab == "share" then
+    BuildShare()
+    if shareFrame.box:GetText() == "" and shareFrame.result:GetText() == "" then
+      ShareSay("Press Export to put your prices in the box, or paste what you were sent and press Import.", nil)
+    end
+  elseif dataTab == "github" then
+    UI.UpdateGitHub()
+  elseif dataTab == "sales" then
+    UI.UpdateSalesList()
+  end
+end
+
+-- Opens the Data page on a sub-page; with none given, the button's toggle.
+function UI.ShowData(tab)
+  if not (UI.IsOpen and UI.IsOpen()) then ns.Open() end
+  if not dataPage then return end
+  if not tab and CurrentMode() == "data" then
+    SetMode("graph")
+    return
+  end
+  dataTab = tab or dataTab
+  SetMode("data")
+end
+
+-- Back to the graph from any page.
+function UI.ShowGraph()
+  SetMode("graph")
+end
+
+-- The data sources: shown, or put away again when already in view.
+function UI.ToggleSources()
+  if CurrentMode() == "data" and dataTab == "sources" and UI.IsOpen and UI.IsOpen() then
+    SetMode("graph")
+  else
+    UI.ShowData("sources")
+  end
+end
+
+-- The list of sales seen; thisItem: only those of the item in focus.
+function UI.ShowSales(thisItem)
+  salesOnlyItem = thisItem and true or false
+  UI.ShowData("sales")
+end
+
+ns.Listen("SOURCES", function()
+  if dataPage and dataPage:IsShown() and dataTab == "github" then ns.Safe(UI.UpdateGitHub) end
+end)
+ns.Listen("MARKET_UPDATED", function()
+  if dataPage and dataPage:IsShown() and dataTab == "sales" then ns.Safe(UI.UpdateSalesList) end
+end)
 
 -- What the auto scan is doing, in a few words, beside its switch.
 function UI.AutoText()

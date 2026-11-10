@@ -406,7 +406,8 @@ function V.Create(parent)
   view.empty = view:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   view.empty:SetPoint("CENTER")
   view.empty:SetWidth(460)
-  view.empty:SetText("Type an item name in the search box,\nor Alt-click any item in your bags.")
+  view.empty:SetText("Search for an item above, or Alt-click one in your bags.\n"
+    .. "Or open Opportunities to see what pays right now.")
 
   local function Place()
     canvas:ClearAllPoints()

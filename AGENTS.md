@@ -34,10 +34,13 @@ the human judge the effort. Friends get it as a zip, so it must work from the zi
    prices before buying, refuse rather than overpay.
 10. **Nothing truncated, nothing mysterious.** Text must fit. Greyed buttons say why. Every
     hidden thing says why it is hidden.
-11. **Plain words.** No jargon in the interface or the top of the docs. Depth lives further down.
-12. **Every graph over time has a smoothing period the player chooses**, in minutes or hours,
+11. **One word per thing.** "sure" for certainty, "sells about N a day" for demand, "Plan it"
+    for planning, "usual price" for the middle. Pages keep their names; the one in view is lit.
+    When a new label is needed, look for the word already in use first.
+12. **Plain words.** No jargon in the interface or the top of the docs. Depth lives further down.
+13. **Every graph over time has a smoothing period the player chooses**, in minutes or hours,
     with "auto" as the default. Raw scans stay visible beside the smoothed line.
-13. **Small and fast inside the game.** One saved file, packed history, work spread over frames.
+14. **Small and fast inside the game.** One saved file, packed history, work spread over frames.
 
 ## How we work
 - Source of truth: this repository. The game folder is an install target (`./install.sh`).

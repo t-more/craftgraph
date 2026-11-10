@@ -50,6 +50,7 @@ function C.Create(parent)
   bg:SetColorTexture(0, 0, 0, 0.45)
 
   f.bands, f.lines, f.dots = {}, {}, {}
+  f.gridLabels, f.barLabels = {}, {}
   f.nights, f.clocks, f.clockLabels = {}, {}, {}
 
   local function Label(point, x, y, font)
@@ -318,6 +319,8 @@ function C.Update(f, id, opts)
     f.xNow:Hide()
     f.xRight:Hide()
     f.smooth:Hide()
+    HideFrom(f.gridLabels, 1)
+    HideFrom(f.barLabels, 1)
     HideFrom(f.nights, 1)
     HideFrom(f.clocks, 1)
     HideFrom(f.clockLabels, 1)
@@ -427,10 +430,10 @@ function C.Update(f, id, opts)
     local r, g, b = 0.35, 1, 0.35
     if not good then r, g, b = 1, 0.35, 0.3 end
     Line(0, y, W, y, r, g, b, 0.7, 1)
-    f.refLabel:SetText("make " .. ns.Money(craft))
+    f.refLabel:SetText("costs " .. ns.Money(craft) .. " to make")
     f.refLabel:SetTextColor(r, g, b)
   elseif craftFar then
-    f.refLabel:SetText("make " .. ns.Money(opts.craft) .. " (" .. craftFar .. " the chart)")
+    f.refLabel:SetText("costs " .. ns.Money(opts.craft) .. " to make (" .. craftFar .. " the chart)")
     if craftFar == "below" then
       f.refLabel:SetTextColor(0.35, 1, 0.35)
     else
@@ -484,6 +487,111 @@ function C.Update(f, id, opts)
   -- units listed at each scan (blue) and units sold a day between full
   -- scans (green). They show whether a price move came with goods piling
   -- up or being bought out.
+  -- Reading sizes off the chart, two ways, each with its own tick box.
+  -- The grid: faint lines at round prices, each with its price and how far
+  -- that is from the price now.
+  local nGrid, nBarLabel = 0, 0
+  f.gridLines, f.changeBars = 0, 0
+  local function Mark(pool, n, text, point, x, y)
+    local fs = pool[n]
+    if not fs then
+      fs = plot:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+      pool[n] = fs
+    end
+    fs:ClearAllPoints()
+    fs:SetPoint(point, plot, "BOTTOMLEFT", x, y)
+    fs:SetText(text)
+    fs:Show()
+  end
+  if opts.grid and hi > lo then
+    local nowPrice = exp((ns.Stats.Eval(model, 0)))
+    local rough = (hi - lo) / 4
+    local power = 10 ^ floor(math.log(rough) / math.log(10))
+    local step = power
+    for _, m in ipairs({ 1, 2, 5, 10 }) do
+      if m * power >= rough then step = m * power break end
+    end
+    local value = math.ceil(lo / step) * step
+    while value < hi do
+      local y = Y(value)
+      -- Clear of the labels in the corners.
+      if y > 16 and y < H - 16 then
+        Line(0, y, W, y, 1, 1, 1, 0.10, 1)
+        f.gridLines = f.gridLines + 1
+        nGrid = nGrid + 1
+        local off = value / nowPrice - 1
+        local pct = ns.Round(math.abs(off) * 100)
+        -- At the right, where the forecast leaves room; clear of the
+        -- demand scale when that is shown.
+        Mark(f.gridLabels, nGrid, ns.Money(value) .. (pct > 0 and ("  " .. (off > 0 and "+" or "-") .. pct .. "%") or ""),
+          "BOTTOMRIGHT", W - (opts.demand and 48 or 4), y + 1)
+      end
+      value = value + step
+    end
+  end
+  HideFrom(f.gridLabels, nGrid + 1)
+
+  -- Change bars: the scanned prices averaged over each period (a day, or a
+  -- fourteenth of a longer range), and how far each average is from the
+  -- one before: green up, red down, taller for more.
+  if opts.bars and #series >= 2 then
+    local periods = max(4, min(14, floor(past + 0.5)))
+    local width = past / periods
+    local sums, counts = {}, {}
+    for i = 1, #series do
+      local day = (series[i][1] - entry.now) / 86400
+      if day >= -past and day <= 0 then
+        local k = min(periods, floor((day + past) / width) + 1)
+        sums[k] = (sums[k] or 0) + math.log(series[i][2])
+        counts[k] = (counts[k] or 0) + 1
+      end
+    end
+    local changes, biggest, last, lastKey = {}, 0, nil, nil
+    for k = 1, periods do
+      if counts[k] then
+        local mean = sums[k] / counts[k]
+        if last then
+          changes[k] = exp(mean - last) - 1
+          biggest = max(biggest, math.abs(changes[k]))
+          lastKey = k
+        end
+        last = mean
+      end
+    end
+    local base, room = 26, 12
+    local bigKey
+    for k, change in pairs(changes) do
+      if math.abs(change) == biggest then bigKey = k end
+    end
+    for k, change in pairs(changes) do
+      local x1 = X(-past + (k - 1) * width) + 1
+      local x2 = X(-past + k * width) - 1
+      local height = biggest > 0 and math.abs(change) / max(biggest, 0.02) * room or 0
+      if height >= 0.5 and x2 > x1 then
+        nBand = nBand + 1
+        local tex = Acquire(f.bands, nBand, MakeBand(plot))
+        tex:ClearAllPoints()
+        tex:SetPoint("BOTTOMLEFT", plot, "BOTTOMLEFT", x1, change >= 0 and base or base - height)
+        tex:SetSize(x2 - x1, height)
+        if change >= 0 then
+          tex:SetGradient("VERTICAL", CreateColor(0.3, 0.9, 0.3, 0.75), CreateColor(0.3, 0.9, 0.3, 0.75))
+        else
+          tex:SetGradient("VERTICAL", CreateColor(1, 0.35, 0.3, 0.75), CreateColor(1, 0.35, 0.3, 0.75))
+        end
+        tex:Show()
+        f.changeBars = f.changeBars + 1
+      end
+      if k == lastKey or k == bigKey then
+        nBarLabel = nBarLabel + 1
+        local pct = ns.Round(change * 100)
+        Mark(f.barLabels, nBarLabel, (change >= 0 and "|cff66e666+" or "|cffff6655") .. pct .. "%|r",
+          "BOTTOM", (x1 + x2) / 2, base + (change >= 0 and height or 0) + 1)
+      end
+    end
+    Line(0, base, X(0), base, 1, 1, 1, 0.18, 1)
+  end
+  HideFrom(f.barLabels, nBarLabel + 1)
+
   -- The smoothing period, and the scanned prices averaged over it.
   local smoothMinutes = ns.settings and ns.settings.chartSmooth or 0
   f.smooth:Show()

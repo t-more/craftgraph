@@ -7,8 +7,10 @@ about another auction house, so each has a switch.
 
 ![The data sources window](../media/sources.png)
 
-Open it by clicking the status line under the graph, with the button beside the auction window,
-or with `/cg sources`.
+They live on the **Data** page (the last of the page buttons along the top), which has four
+sub-pages: **Data sources**, **Share prices**, **Online sharing** and **Sales seen**. Clicking the
+status line under the graph, the button beside the auction window, or `/cg sources` also opens it.
+A source that is not there (not set up, not installed) has no tick and says why.
 
 | Source | What it adds | Needs |
 |---|---|---|
@@ -20,7 +22,7 @@ or with `/cg sources`.
 Switch one off and the numbers are worked out again without it, so you can see what it changes.
 
 ## Sharing prices with another player
-`/cg share` opens a box of text.
+The **Share prices** sub-page (or `/cg share`) has a box of text.
 
 - **Export my prices** fills it with the prices of your scans from the last day. Copy it and send
   it, or save it as a file ending in `.cg.json`.
@@ -48,6 +50,9 @@ The format is plain JSON, so anything can read or make it:
 so the format can grow.
 
 ## A shared repository on GitHub (optional)
+The **Online sharing** sub-page (or `/cg github`) shows whether you are connected, who shares
+with you, and the commands to run outside the game, ready to copy.
+
 Players who want to can pool their prices in one public repository, each in a file of their own,
 tagged with their character's name and GitHub account. The addon then lists each player as a
 source of their own, by character name, with a switch.

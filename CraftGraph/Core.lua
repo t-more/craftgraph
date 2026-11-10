@@ -129,6 +129,8 @@ local DEFAULTS = {
   horizonDays = 2,    -- how long a batch may take to sell
   chartDays = 14,     -- how far back the price chart looks; 0 = everything
   flowGlow = true,    -- small lights drift along graph lines towards where money is made
+  chartGrid = true,   -- a grid with prices on the price chart, to read sizes off
+  chartBars = false,  -- small bars for how much the price moved from period to period
   chartSmooth = 0,    -- minutes the chart's lines are averaged over; 0 = chosen by the chart
   chartFlow = false,  -- draw supply (units listed) on the price chart
   chartDemand = false, -- draw demand (units sold a day) on the price chart
@@ -400,6 +402,14 @@ SlashCmdList["CRAFTGRAPH"] = function(msg)
   end
   if msg == "share" or msg == "export" or msg == "import" then
     if ns.UI and ns.UI.ShowShare then ns.Safe(ns.UI.ShowShare, msg == "import" and "import" or "export") end
+    return
+  end
+  if msg == "sales" or msg == "sold" then
+    if ns.UI and ns.UI.ShowSales then ns.Safe(ns.UI.ShowSales, false) end
+    return
+  end
+  if msg == "github" then
+    if ns.UI and ns.UI.ShowData then ns.Safe(ns.UI.ShowData, "github") end
     return
   end
   if msg == "sources" or msg == "data" then

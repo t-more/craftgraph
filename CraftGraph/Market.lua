@@ -847,6 +847,7 @@ local CANCEL_BASE, CANCEL_RELISTED = 0.10, 0.95
 local SKIPPED_FACTOR = 0.25           -- cheaper ones were left: probably not bought
 local SELLERS_SOLD_KEPT = 12
 local SALES_HISTORY_KEPT = 160        -- gap-by-gap selling rates kept per item
+local SALES_LOG_KEPT = 40             -- auctions judged sold, listed per item
 local bandInfo = {}
 
 -- The least and most seconds an auction in a time-left band has left.
@@ -962,6 +963,7 @@ function M.TrackSales(id, auctions, now)
   end)
   local sold, bySeller = 0, {}
   local soldStacks, marginal = 0, 0
+  local soldLog = {}
   for _, g in ipairs(gone) do
     local cancel = CANCEL_BASE
     if g.owner ~= "" and (relisted[g.owner] or 0) > 0 then
@@ -978,6 +980,11 @@ function M.TrackSales(id, auctions, now)
     local skipped = g.unit > floorPrice * 1.05 and SKIPPED_FACTOR or 1
     local p = notExpired * (1 - cancel) * skipped
     g.p = p
+    -- Kept for the list of sales: the ones more likely sold than not.
+    if p >= 0.5 then
+      soldLog[#soldLog + 1] = now .. "," .. floor(g.unit + 0.5) .. "," .. g.count .. "," .. floor(p * 100 + 0.5)
+        .. "," .. g.owner
+    end
     sold = sold + p * g.count
     soldStacks = soldStacks + p
     if p > 0.5 and g.unit > marginal then marginal = g.unit end
@@ -1012,6 +1019,14 @@ function M.TrackSales(id, auctions, now)
   -- Belief about the rate: units and days of evidence, older evidence fading.
   local days = gap / 86400
   local fade = 0.5 ^ (days / SALES_HALFLIFE)
+  -- The auctions judged sold, newest last, the latest forty of an item.
+  if #soldLog > 0 then
+    local all = {}
+    for entry in (it.st or ""):gmatch("[^;]+") do all[#all + 1] = entry end
+    for _, entry in ipairs(soldLog) do all[#all + 1] = entry end
+    local from = max(1, #all - SALES_LOG_KEPT + 1)
+    it.st = table.concat(all, ";", from)
+  end
   -- A short history of the rate itself, for the chart: time, units a day.
   local sh = it.sh or {}
   sh[#sh + 1], sh[#sh + 2] = now, floor(sold / days + 0.5)
@@ -1035,6 +1050,37 @@ function M.TrackSales(id, auctions, now)
     it.sq = sq
   end
   return sold
+end
+
+-- The auctions judged sold (more likely than not), newest first: each
+-- { t, id, unit, count, sure (0-1), owner }. id: one item, or nil for every
+-- item. t is the scan at which the auction was found gone.
+local salesLogCache, salesLogGen
+function M.SalesLog(id)
+  if not M.Source("Sales") then return {} end
+  local function read(itemID, it, out)
+    for t, unit, count, pct, owner in (it.st or ""):gmatch("(%d+),(%d+),(%d+),(%d+),([^;]*)") do
+      out[#out + 1] = { t = tonumber(t), id = itemID, unit = tonumber(unit), count = tonumber(count),
+        sure = tonumber(pct) / 100, owner = owner }
+    end
+  end
+  local out = {}
+  if id then
+    local it = ItemRecord(id, false)
+    if it then read(id, it, out) end
+  else
+    if salesLogGen == ns.generation and salesLogCache then return salesLogCache end
+    for itemID, it in pairs(ns.realm and ns.realm.items or {}) do
+      if type(it) == "table" and it.st then read(itemID, it, out) end
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.t ~= b.t then return a.t > b.t end
+    if a.id ~= b.id then return a.id < b.id end
+    return a.unit * a.count > b.unit * b.count
+  end)
+  if not id then salesLogCache, salesLogGen = out, ns.generation end
+  return out
 end
 
 -- The selling rate believed from the vanished auctions: units a day, the
@@ -1730,6 +1776,7 @@ function M.Repair(db)
         if out[1] then Compact(it, out[#out - 3]) end
         -- Turnover and sales were built on those pieces: start again.
         it.v, it.vn, it.sa, it.sc, it.sb, it.sf, it.sh, it.sq, it.au = nil, nil, nil, nil, nil, nil, nil, nil, nil
+        it.st = nil
         it.sn = it.sl and #it.sl / 2 or nil
       end
     end

@@ -1119,7 +1119,7 @@ do
     RunTimers()
     st = J.TrackStats(pin)
     check(st.n == 2 and st.last < st.first, string.format("a dearer scan lowers the projection (%d to %d)", st.first, st.last))
-    check(ns.UI.GoalText(pin):find("down", 1, true) ~= nil, "and the plan window says it went down: " .. ns.UI.GoalText(pin))
+    check(ns.UI.GoalText(pin):find("fell", 1, true) ~= nil, "and the plan window says it fell: " .. ns.UI.GoalText(pin))
     now = now + 300
     price(d.id, { { ladderBefore + 1, d.qty }, { ladderBefore + 30, 50 } })
     ns.Fire("MARKET_UPDATED")
@@ -1503,7 +1503,7 @@ do
     side.chartMode.scripts.OnClick()
     RunTimers()
     check(side.week:IsShown() and side.chartMode.text == "Week pattern", "its header switches to the week pattern")
-    check(not side.range:IsShown() and not side.certainty:IsShown(), "the history's own options are hidden meanwhile")
+    check(not side.range:IsShown() and not side.showButton:IsShown(), "the history's own options are hidden meanwhile")
     check(side.week.bars[168] and side.week.bars[168]:IsShown(), "the strip has all 168 hours")
     check(side.week.readout.text:find("Monday 13:00", 1, true) ~= nil, "it starts on the time already selected: " .. side.week.readout.text)
     side.week.Select(2 * 24 + 20)
@@ -1929,6 +1929,28 @@ do
       "with no sales seen yet it says what it needs: " .. chartFrame.flowLabel.text)
     M.Get(id).sh, M.Get(id).sa, M.Get(id).sn, M.Get(id).sb = keep, sa, sn, sb
     ns.generation = ns.generation + 1
+    -- Reading sizes off the chart: a grid (on to start with) and change bars, each with a tick box.
+    do
+      check(ns.settings.chartGrid == true and ns.settings.chartBars == false, "a new install has the grid on and the bars off")
+      check(chartFrame.gridLines >= 1 and chartFrame.gridLabels[1].text ~= "", "the grid draws lines with their prices: " .. chartFrame.gridLabels[1].text)
+      check(side.showButton:IsShown() and not side.chartOptions:IsShown(), "the tick boxes sit behind a Show button")
+      side.showButton.scripts.OnClick(side.showButton)
+      check(side.chartOptions:IsShown() and side.grid:GetChecked() == true and side.bars:GetChecked() == false, "which opens the panel with them")
+      side.grid:SetChecked(false)
+      side.grid.scripts.OnClick(side.grid) RunTimers()
+      check(ns.settings.chartGrid == false and chartFrame.gridLines == 0, "unticking Grid removes it")
+      side.bars:SetChecked(true)
+      side.bars.scripts.OnClick(side.bars) RunTimers()
+      check(ns.settings.chartBars == true and chartFrame.changeBars >= 1, "ticking Change bars draws them: " .. chartFrame.changeBars)
+      local labelled = false
+      for _, l in ipairs(chartFrame.barLabels) do if l.shown and l.text:find("%", 1, true) then labelled = true end end
+      check(labelled, "the latest change carries its figure")
+      side.bars:SetChecked(false)
+      side.bars.scripts.OnClick(side.bars)
+      side.grid:SetChecked(true)
+      side.grid.scripts.OnClick(side.grid) RunTimers()
+      side.showButton.scripts.OnClick(side.showButton)
+    end
     -- The smoothing period: click to step through; every scanned line follows it.
     do
       local C = ns.Chart
@@ -2416,6 +2438,88 @@ do
   f:Hide()
   for _, id in ipairs({ a, b, c }) do ns.realm.items[id] = nil end
   ns.generation = ns.generation + 1
+end
+
+------------------------------------------------------------------------------
+-- The Data page: sources, import and export, GitHub, and the sales seen.
+do
+  local M = ns.Market
+  local id = 2610
+  ns.realm.items[id] = nil
+  ns.realm.sharedBy, ns.realm.sharedSelf = nil, nil
+  local function auctions(list)
+    local out = {}
+    for _, a in ipairs(list) do
+      for _ = 1, a.n do out[#out + 1] = { a.unit, a.count, a.owner, a.band } end
+    end
+    return out
+  end
+  M.TrackSales(id, auctions({ { n = 6, unit = 100, count = 20, owner = "Anna", band = 3 }, { n = 2, unit = 90, count = 5, owner = "Cy", band = 0 } }), now - 1800)
+  M.TrackSales(id, auctions({ { n = 3, unit = 100, count = 20, owner = "Anna", band = 3 } }), now)
+  ns.generation = ns.generation + 1
+  local log = M.SalesLog(id)
+  check(#log == 3 and log[1].owner == "Anna" and log[1].count == 20 and log[1].unit == 100 and log[1].sure > 0.8 and log[1].t == now,
+    "the three stacks of Anna's that vanished are listed as sold, with seller, size, price and how sure (" .. #log .. ")")
+  local everything = M.SalesLog()
+  local mine = 0
+  for _, e in ipairs(everything) do if e.id == id then mine = mine + 1 end end
+  check(mine == 3, "the list of everything includes them")
+  -- Cy's two, with under half an hour left, ran out: not listed.
+  local cy = 0
+  for _, e in ipairs(log) do if e.owner == "Cy" then cy = cy + 1 end end
+  check(cy == 0, "auctions that ran out are not listed as sales")
+
+  ns.Open(id) RunTimers()
+  local page
+  for _, f in ipairs(frames) do if f.tabs and f.panes and f.tabs.github then page = f end end
+  check(page ~= nil and not page:IsShown(), "the Data page exists and starts closed")
+  ns.UI.ShowData()
+  check(page:IsShown() and page.panes.sources:IsShown() and ns.UI.sourcesFrame:IsShown(), "the Data button opens it on the data sources")
+  page.tabs.share.scripts.OnClick(page.tabs.share)
+  check(page.panes.share:IsShown() and not page.panes.sources:IsShown() and ns.UI.shareFrame:IsShown(), "Import and export is a page of its own")
+  page.tabs.github.scripts.OnClick(page.tabs.github)
+  local gh = ns.UI.githubPane
+  check(page.panes.github:IsShown() and gh.status.text:find("Not connected", 1, true) and gh.boxes[2].text:find("data-pull", 1, true),
+    "GitHub is a page of its own; with nothing fetched it says so and gives the commands: " .. gh.status.text)
+  local function from(name, github, age)
+    return '{"format":"craftgraph-prices","version":1,"realm":"' .. ns.realmKey .. '","from":"' .. name .. '","github":"' .. github
+      .. '","made":' .. (now - age) .. ',"items":{"' .. id .. '":{"t":' .. (now - age) .. ',"n":4,"l":[95,4]}}}'
+  end
+  M.Import(from("Anwen", "anwen-gh", 600))
+  RunTimers()
+  check(gh.status.text:find("fetching what others share", 1, true) and gh.people.text:find("Anwen", 1, true), "with another player's prices it names them: " .. gh.people.text)
+  M.Import(from(UnitName("player"), "me-gh", 300))
+  RunTimers()
+  check(gh.status.text:find("You are sharing", 1, true) and gh.status.text:find("me-gh", 1, true), "and when your own are out there it says you are sharing: " .. gh.status.text)
+  -- Sales seen: all items, then only the one in focus (also from the side panel).
+  page.tabs.sales.scripts.OnClick(page.tabs.sales)
+  local sp = ns.UI.salesPane
+  check(page.panes.sales:IsShown() and sp.count >= 3 and sp.summary.text:find("Sales seen", 1, true), "Sales seen lists them (" .. sp.count .. ")")
+  local side
+  for _, f in ipairs(frames) do if f.week and f.chartMode then side = f end end
+  ns.UI.ShowData()
+  check(not page:IsShown(), "the Data button puts the page away again")
+  side.salesHit.scripts.OnClick(side.salesHit)
+  check(page:IsShown() and page.panes.sales:IsShown() and sp.count == 3 and sp.rows[1].seller.text == "Anna" and sp.rows[1].count.text == "x20",
+    "clicking supply and demand in the side panel lists this item's sales: " .. sp.count)
+  sp.filter.scripts.OnClick(sp.filter)
+  check(sp.count >= 3 and sp.filter.text == "This item only", "the filter switches back to everything")
+  sp.rows[1].scripts.OnClick(sp.rows[1], "LeftButton")
+  check(not page:IsShown(), "clicking a sale opens its item on the graph")
+  SlashCmdList.CRAFTGRAPH("sales")
+  check(page:IsShown() and page.panes.sales:IsShown(), "/cg sales opens the list")
+  SlashCmdList.CRAFTGRAPH("github")
+  check(page.panes.github:IsShown(), "/cg github opens that page")
+  M.SetSource("Sales", false)
+  check(#M.SalesLog(id) == 0, "with the sales source off the list is empty")
+  M.SetSource("Sales", true)
+  ns.UI.ShowData()
+  M.ClearShared()
+  ns.realm.items[id] = nil
+  ns.generation = ns.generation + 1
+  local errors = 0
+  for _, line in ipairs(ns.db.log) do if line:find("ERROR") then errors = errors + 1 print(line) end end
+  check(errors == 0, "no errors on the Data page")
 end
 
 ------------------------------------------------------------------------------

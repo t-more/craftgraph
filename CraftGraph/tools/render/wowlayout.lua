@@ -289,6 +289,9 @@ function W:SetBackdrop(b) self._backdrop = b end
 function W:SetBackdropColor(r, g, b, a) self._backdropColor = { r, g, b, a or 1 } end
 function W:SetBackdropBorderColor(r, g, b, a) self._backdropBorder = { r, g, b, a or 1 } end
 function W:SetClipsChildren(c) self._clips = c end
+function W:SetScrollChild(child)
+  child._points = { { point = "TOPLEFT", relTo = self, relPoint = "TOPLEFT", x = 0, y = 0 } }
+end
 function W:SetFrameStrata(s) self._strata = s end
 function W:SetTitle(t) self._title = t end
 function W:SetPortraitToAsset(a) self._portrait = a end
@@ -328,6 +331,8 @@ function CreateFrame(kind, name, parent, template)
   if template == "UIPanelButtonTemplate" then f._w, f._h = 80, 22 end
   if template == "UICheckButtonTemplate" then f._w, f._h = 24, 24 end
   if template == "UIPanelCloseButton" then f._w, f._h = 24, 24 end
+  -- A scroll frame shows only what fits inside it.
+  if kind == "ScrollFrame" then f._clips = true end
   if template == "PortraitFrameTemplate" then
     f.CloseButton = CreateFrame("Button", nil, f, "UIPanelCloseButton")
     f.CloseButton:SetPoint("TOPRIGHT", 0, 0)

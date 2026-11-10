@@ -90,10 +90,20 @@ When a forecast is not worth showing
   anyway, tick "Show forecasts that are only guesses" in the data sources
   window or type /cg guesses.
 
+Finding your way
+  The buttons along the top are the pages: Graph, Opportunities, Sell bags,
+  Trends and Data; the one in view is lit. With no item chosen the window
+  opens on Opportunities. Data has four sub-pages: Data sources, Share
+  prices, Online sharing and Sales seen (every auction judged sold, newest
+  first; clicking "Supply and demand" in the side panel lists one item's).
+  Above the price chart, "Show ..." opens the tick boxes for what it draws:
+  a grid with prices (on to start with), change bars, the certainty glow,
+  supply and demand.
+
 Is now a good time to sell?
-  In Opportunities each row has a small "Sell?" mark: "now" when the price
-  of the last three hours is clearly above its middle price of the last
-  week, "wait" when clearly below, "ok" in between, a dash when there is too
+  In Opportunities the "Sell when" column says "now" when the price of the
+  last three hours is clearly above its usual price of the last week,
+  "wait" when clearly below, "any time" in between, a dash when there is too
   little to compare. Hover the row for the numbers. The same line is in the
   Sell bags tooltip. It needs no forecast, so it works from the first day.
 

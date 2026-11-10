@@ -86,6 +86,14 @@ frame("pictures", { view = boxView(true), zoom = 2, caption = "Tick Supply and D
 ns.settings.chartFlow, ns.settings.chartDemand = false, false
 ns.UI.Refresh() settle()
 
+-- Reading sizes off the chart: the grid (on by default) and the change bars.
+ns.settings.chartBars = true
+ns.UI.Refresh() settle()
+still("grid-bars", { view = boxView(), zoom = 2 })
+frame("pictures", { view = boxView(true), zoom = 2, caption = "A grid with prices, and bars for how much it moved", captionScale = 1.1 }, 2.4)
+ns.settings.chartBars = false
+ns.UI.Refresh() settle()
+
 -- Supply and demand telling a story: three weeks of Copper Bar.
 ns.UI.Focus(World.item("Copper Bar")) settle()
 ns.settings.chartDays = 0
@@ -235,10 +243,39 @@ ns.settings.showGuesses = false
 ns.generation = ns.generation + 1
 ns.settings.sideChart = "history" ns.UI.Refresh() settle()
 
-ns.UI.ToggleSources() settle()
-still("sources", { view = wow.viewOf(ns.UI.sourcesFrame, 14), zoom = 2 })
-tour("Every extra data source has a switch, so you can see what it changes", 4)
-ns.UI.ToggleSources()
+-- The Data page and its sub-pages.
+do
+  local function friend(name, github, age)
+    local items = {}
+    for i = 1, 40 do
+      local item = World.ids[i * 7]
+      local info = M.Info(item)
+      if info and info.price then
+        items[#items + 1] = '"' .. item .. '":{"t":' .. (wow.now - age) .. ',"n":' .. (info.total or 1) .. ',"l":[' .. math.floor(info.price * 0.97) .. ',' .. (info.total or 1) .. ']}'
+      end
+    end
+    return '{"format":"craftgraph-prices","version":1,"realm":"' .. ns.realmKey .. '","from":"' .. name .. '","github":"' .. github
+      .. '","made":' .. (wow.now - age) .. ',"items":{' .. table.concat(items, ",") .. '}}'
+  end
+  M.Import(friend("Anwen", "anwen-plays", 1500))
+  M.Import(friend("Borin", "borin-ironfoot", 5400))
+  M.Import(friend(UnitName("player"), "demo-account", 900))
+  ns.UI.ShowData("sources") settle()
+  still("sources", { view = wow.viewOf(ns.UI.sourcesFrame, 14), zoom = 2 })
+  still("data-sources", { zoom = 1.5 })
+  tour("Data: every extra source has a switch, and so has every player who shares with you", 4)
+  ns.UI.ShowShare("export") settle()
+  still("data-share", { zoom = 1.5 })
+  tour("Import and export: your prices as text to send, or paste what a friend sent", 4)
+  ns.UI.ShowData("github") settle()
+  still("data-github", { zoom = 1.5 })
+  tour("GitHub (optional): who shares, and how to connect from outside the game", 4)
+  ns.UI.ShowSales(false) settle()
+  still("data-sales", { zoom = 1.5 })
+  tour("Sales seen: the auctions judged sold between full scans", 4)
+  M.ClearShared()
+  ns.UI.ShowData()
+end
 ns.UI.Focus(hero) settle()
 tour("CraftGraph: /cg in game. Everything here was drawn from simulated data", 4)
 

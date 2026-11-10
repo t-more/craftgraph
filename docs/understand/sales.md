@@ -29,6 +29,11 @@ In this simulated example the blue line (units listed) triples while the price s
 piling up. Later the green line (units sold a day) doubles, the blue line drains and the price
 jumps: real demand. Reading the three together tells you which kind of move you are looking at.
 
+## The list of sales
+The **Sales seen** sub-page of Data (or `/cg sales`) lists every auction judged sold, newest
+first: when it was found gone, the item, the stack, the price, the seller and how sure. Clicking
+"Supply and demand" in the side panel opens the same list for just that item.
+
 ## Its limits
 It needs two full scans within twelve hours. Auctions posted *and* sold between two scans are
 never seen, so for a busy item scanned hours apart the figure is too low; then it reads "at

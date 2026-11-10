@@ -2,7 +2,7 @@
 
 [Guide](../README.md) › Playing with it
 
-A plan is something you decided to do. Press **Plan it** (or **Add to plan**) and a small window
+A plan is something you decided to do. Press **Plan it** and a small window
 appears that stays with you: at the auction house, the mailbox, the bank, a vendor.
 
 ![The plan window](../media/plan.gif)

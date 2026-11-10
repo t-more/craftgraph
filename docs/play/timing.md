@@ -11,8 +11,13 @@ The box in the side panel has three pictures. Its heading button switches betwee
 ![The three pictures](../media/pictures.gif)
 
 1. **Price history**: the price over time. The glow is how sure the estimate is; suns and moons
-   under it show the time of day. Tick **Supply** to add how many were listed (blue) and
-   **Demand** to add how many sold a day (green, with its scale in units a day at the right).
+   under it show the time of day. **Show ...** opens the tick boxes for what is drawn:
+   - **Grid with prices** (on to start with): faint lines at round prices, each with its price
+     and how far it is from the price now, so you can read off how big a move was.
+   - **Change bars**: one small bar per day, green when the price rose from the day before, red
+     when it fell, taller for more.
+   - **Certainty glow**, **Supply** (units listed, blue) and **Demand** (sold a day, green, with
+     its scale in units a day at the right).
    Under the chart, click **smooth** to choose how long the lines are averaged over, from 15
    minutes to a day ("auto" lets the chart choose). Right-click goes back.
 

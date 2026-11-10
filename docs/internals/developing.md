@@ -37,7 +37,7 @@ restart is only needed when a file is added or `CraftGraph.toc` changes.
 
 ## Where things are on this machine
 
-- Game addons: `~/.local/share/Steam/steamapps/compatdata/3574889647/pfx/drive_c/Program Files (x86)/World of Warcraft/_forever_/Interface/AddOns/`
+- Game addons (Steam on Linux): `~/.local/share/Steam/steamapps/compatdata/<number>/pfx/drive_c/Program Files (x86)/World of Warcraft/_forever_/Interface/AddOns/`
 - Saved data and the in-game log: `.../_forever_/WTF/Account/<account>/SavedVariables/CraftGraph.lua`
 - Scan archive: `~/.local/share/craftgraph/market.sqlite`, raw copies in `~/.local/share/craftgraph/raw/`
 

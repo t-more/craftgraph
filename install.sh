@@ -7,7 +7,16 @@
 # Another game folder:  WOW_ADDONS=/path/to/Interface/AddOns ./install.sh
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
-addons=${WOW_ADDONS:-"$HOME/.local/share/Steam/steamapps/compatdata/3574889647/pfx/drive_c/Program Files (x86)/World of Warcraft/_forever_/Interface/AddOns"}
+# The game folder: WOW_ADDONS if given, else a World of Warcraft Forever
+# installed through Steam (Proton), wherever Steam keeps it.
+addons=${WOW_ADDONS:-}
+if [ -z "$addons" ]; then
+  for candidate in "$HOME"/.local/share/Steam/steamapps/compatdata/*/pfx/drive_c/"Program Files (x86)"/"World of Warcraft"/_forever_/Interface/AddOns \
+                   "$HOME"/.steam/steam/steamapps/compatdata/*/pfx/drive_c/"Program Files (x86)"/"World of Warcraft"/_forever_/Interface/AddOns; do
+    if [ -d "$candidate" ]; then addons=$candidate; break; fi
+  done
+fi
+[ -n "$addons" ] || { echo "Could not find the game. Set WOW_ADDONS=/path/to/_forever_/Interface/AddOns" >&2; exit 1; }
 [ -d "$addons" ] || { echo "No AddOns folder at: $addons" >&2; exit 1; }
 dry=""
 [ "${1:-}" = "--check" ] && dry="--dry-run"

@@ -38,12 +38,13 @@ what it saw and tells you why. One switch shows the guess anyway.
 
 ## Install
 
-1. Download the zip and unzip it.
+1. Download `CraftGraph-0.1.zip` from the [latest release](https://github.com/t-more/craftgraph/releases/latest) and unzip it.
 2. Windows: double-click **Install CraftGraph**. Anything else: copy the `CraftGraph` folder into
    `World of Warcraft/_forever_/Interface/AddOns/`.
 3. Start the game, open the auction house, type `/cg` and press **Full scan**.
 
-It needs nothing but the game. [More on installing](docs/start/install.md).
+It needs nothing but the game. This is an early version: most of it has only been checked outside
+the game so far, so expect rough edges and please say what breaks. [More on installing](docs/start/install.md).
 
 ## Want to know more?
 

@@ -12,7 +12,10 @@ own interface code on a simulated market, outside the game.*
 
 **See what anything is made of.** Click an item and you get a map: what it is made from on the
 right, what it is used in on the left, with the price of every step and buttons to buy, make and
-sell.
+sell. Gold lines earn, red ones lose, thicker ones earn more, and small lights drift the way
+the money flows.
+
+![The graph, with lights drifting where the money flows](docs/media/flow.gif)
 
 **Get a list of ways to make money right now.** Craft and sell, buy cheap and relist, buy under
 vendor price, sell what is in your bags. Each line says what it costs, what it should earn and how

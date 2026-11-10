@@ -53,7 +53,7 @@ times as much. This is an imaginary rush, played through in the window:
 
 [How to read it, and when to get out](docs/examples/riding-a-wave.md).
 
-**See it on a real market.** Fourteen hours of real scans of one elixir on a two-day-old economy:
+**See it on a real market.** Fifteen hours of real scans of one elixir on a two-day-old economy:
 a thin margin, a line in red saying what could be lost, and no forecast, because there is not
 enough to go on yet. [The walk-through](docs/examples/real-item.md).
 

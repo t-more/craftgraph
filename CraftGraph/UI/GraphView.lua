@@ -344,6 +344,15 @@ local function FillNode(b, node, isCenter)
   end
 end
 
+-- What making the item a line leads to earns in all, at the quantity that
+-- earns most: 0 when it does not pay or cannot be told.
+function V.EdgeGain(e)
+  local product = e.from
+  if not product or not ns.Opt.IsCraftable(product) then return 0 end
+  local _, best = ns.Opt.BestQuantity(product)
+  return best and best.profit and best.profit > 0 and best.profit or 0
+end
+
 -- How much making the item a line leads to earns, from -1 (a loss of a
 -- quarter of its cost or more) through 0 (nothing) to 1 (a gain of a
 -- quarter or more); nil when the prices to tell are missing.
@@ -461,7 +470,16 @@ function V.SetGraph(view, graph, refit)
 
   if graph then
     -- Lines first (they sit under the item panels).
-    local stacked = {}
+    local stacked, earned = {}, {}
+    -- How much each thing on screen earns at its best quantity, against
+    -- the best of them: lines towards the bigger earners are drawn thicker.
+    local gains, topGain = {}, 0
+    for _, e in ipairs(graph.edges) do
+      if gains[e.from] == nil then
+        gains[e.from] = V.EdgeGain(e)
+        topGain = max(topGain, gains[e.from])
+      end
+    end
     for _, e in ipairs(graph.edges) do
       local a, b = graph.byId[e.from], graph.byId[e.to]
       if a and b and a.x and b.x then
@@ -477,6 +495,8 @@ function V.SetGraph(view, graph, refit)
         -- leads to earns money: gold when it does, grey around nothing, red
         -- towards a loss. A quarter of the cost either way is full colour.
         local lean = V.EdgeLean(e)
+        local share = (topGain > 0 and (gains[e.from] or 0) > 0) and math.sqrt(gains[e.from] / topGain) or 0
+        thick = thick + 1.8 * share
         if lean then
           local to = lean >= 0 and { 1, 0.82, 0 } or { 0.86, 0.30, 0.24 }
           local k = math.abs(lean)
@@ -489,7 +509,7 @@ function V.SetGraph(view, graph, refit)
         -- Where a step clearly earns, a small light drifts along its line
         -- from the material towards the thing made of it.
         if lean and lean >= 0.3 and ns.settings.flowGlow ~= false then
-          view.flows[#view.flows + 1] = { x1 = x1, y1 = y1, x2 = x2, y2 = y2, strength = lean,
+          view.flows[#view.flows + 1] = { x1 = x1, y1 = y1, x2 = x2, y2 = y2, strength = lean, share = share,
             offset = ((e.from * 7 + e.to * 13) % 100) / 100 }
         end
         local px, py = x1, y1
@@ -512,6 +532,26 @@ function V.SetGraph(view, graph, refit)
         -- label sits beside the item at the end where lines fan out, and
         -- labels arriving at the same item stack upwards.
         local text = ns.UI.EdgeLabel and ns.UI.EdgeLabel(e) or (e.qty and e.qty > 0 and ("x" .. e.qty))
+        -- What one craft of the thing this line leads to earns. On the
+        -- "used in" side it follows the amount; on the "made from" side it
+        -- sits once at the product's end, where its materials' lines meet.
+        local earn = ns.UI.EdgeProfit and ns.UI.EdgeProfit(e) or nil
+        if earn and e.left and text then
+          text = text .. " " .. earn
+        elseif earn and not e.left and not earned[e.from] then
+          earned[e.from] = true
+          nLabel = nLabel + 1
+          local es = view.labels[nLabel]
+          if not es then
+            es = canvas:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+            view.labels[nLabel] = es
+          end
+          es:ClearAllPoints()
+          es:SetPoint("BOTTOMLEFT", canvas, "CENTER", x1 + 5, y1 + 3)
+          es:SetText(earn)
+          es:SetTextColor(1, 1, 1)
+          es:Show()
+        end
         if text then
           nLabel = nLabel + 1
           local fs = view.labels[nLabel]
@@ -605,6 +645,10 @@ function V.Animate(view)
     local fade = math.sin(progress * math.pi)
     pulse.dot:ClearAllPoints()
     pulse.dot:SetPoint("CENTER", view.canvas, "CENTER", x, y)
+    -- A bigger earner gets a bigger light.
+    local grow = flow.share or 0
+    pulse.dot:SetSize(4 + 3 * grow, 4 + 3 * grow)
+    pulse.halo:SetSize(12 + 8 * grow, 12 + 8 * grow)
     pulse.dot:SetColorTexture(1, 0.92, 0.55, 0.75 * flow.strength * fade)
     pulse.halo:ClearAllPoints()
     pulse.halo:SetPoint("CENTER", view.canvas, "CENTER", x, y)

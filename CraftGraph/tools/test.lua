@@ -2123,6 +2123,39 @@ do
       f.offset = 0.6
       V.Animate(gv)
       check(gv.pulses[1].x < early, "it travels from the material towards the thing made of it")
+      -- Each line says what one craft of the thing it leads to earns.
+      do
+        local one = ns.Opt.Evaluate(paying, 1)
+        local text = ns.UI.EdgeProfit({ from = paying })
+        check(text and text:find("/craft", 1, true) and text:find("+", 1, true) and one.profit > 0, "a paying craft's line shows its profit per craft: " .. tostring(text))
+        check(ns.UI.EdgeProfit({ from = 2770 }) == nil, "a raw material has none")
+        local shown = 0
+        for _, label in ipairs(gv.labels) do
+          if label.shown and label.text:find("/craft", 1, true) then shown = shown + 1 end
+        end
+        check(shown >= 1, "it is written on the graph (" .. shown .. " labels)")
+      end
+      -- Lines towards the biggest earner on screen are the thickest.
+      do
+        local graph = ns.Graph.Build(paying, {})
+        local gains, top, topId, lowId = {}, 0, nil, nil
+        for _, e in ipairs(graph.edges) do
+          local g = V.EdgeGain(e)
+          gains[e.from] = g
+          if g > top then top, topId = g, e.from end
+        end
+        for id, g in pairs(gains) do
+          if g > 0 and g < top * 0.5 then lowId = id end
+        end
+        check(top > 0 and V.EdgeGain({ from = 2770 }) == 0, "what a line's product earns in all is known, and nothing for a raw material")
+        local shares = {}
+        for _, fl in ipairs(gv.flows) do shares[#shares + 1] = fl.share end
+        table.sort(shares)
+        check(#shares > 0 and shares[#shares] <= 1 and shares[1] >= 0, "each lit line knows its share of the best earner")
+        if lowId then
+          check(math.sqrt(gains[lowId] / top) < 0.75, "a smaller earner gets a clearly thinner line")
+        end
+      end
       SlashCmdList.CRAFTGRAPH("flow") RunTimers()
       check(ns.settings.flowGlow == false and #gv.flows == 0 and not gv.pulses[1].dot:IsShown(), "/cg flow switches the lights off")
       SlashCmdList.CRAFTGRAPH("flow") RunTimers()

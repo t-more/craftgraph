@@ -2784,6 +2784,17 @@ end
 -- worth. To the right, the amount is what the whole plan sends into that
 -- craft (or one craft's worth when the plan does not use the recipe). To
 -- the left, it is what one of that item takes of the item it hangs on.
+-- What one craft of the thing a line leads to earns, as short coloured
+-- text ("+35c/craft"), or nil when it cannot be told.
+function UI.EdgeProfit(e)
+  local product = e.from
+  if not product or not ns.Opt.IsCraftable(product) then return nil end
+  local ev = ns.Opt.Evaluate(product, 1)
+  if not ev.profit then return nil end
+  local profit = ns.Round(ev.profit)
+  return (profit < 0 and "|cffff5040-" or "|cff40ff40+") .. ns.Money(math.abs(profit)) .. "|r" .. GREY .. "/craft|r"
+end
+
 function UI.EdgeLabel(e)
   if not e.qty or e.qty <= 0 then return nil end
   local plan = state.job and state.job.needs and state.job.needs.plan

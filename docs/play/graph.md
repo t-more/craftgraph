@@ -24,6 +24,9 @@ the lights off).
 
 ![Lights drifting where the money flows](../media/flow.gif)
 
+Lines are **thicker** towards the things that earn the most among those on screen, and each
+line carries what one craft of the thing it leads to earns, such as `+35c/craft`.
+
 **Moving around:** click a card to centre it, drag to pan, mouse wheel to zoom. The mouse's back
 and forward buttons go back and forward.
 

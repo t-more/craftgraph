@@ -60,7 +60,9 @@ Reading the graph
   Each card shows the cheapest auction price with its margin and, in short,
   how many sell a day ("120/d"; "120+/d" means at least that many). The
   lines between cards are gold where making the next thing earns money,
-  grey around nothing and red towards a loss.
+  grey around nothing and red towards a loss. They are thicker towards the
+  bigger earners on screen, say what one craft earns ("+35c/craft"), and
+  faint lights drift along the paying ones (/cg flow switches those off).
   On the price chart, tick "Supply" to add how many were listed at each scan
   (blue) and "Demand" to add how many sold a day (green, with its scale in
   units a day at the right edge). "Glow" is the certainty shading.

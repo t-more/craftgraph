@@ -625,6 +625,70 @@ function S.WeekAt(w, day, hour)
   return out
 end
 
+------------------------------------------------------------------------------
+-- Is a forecast worth showing?
+--
+-- A forecast drawn from a handful of scans, or for a price that jumps
+-- about, looks like knowledge and is not. So each item is judged first:
+--   early     too few scans, or too short a time, to forecast at all
+--   chaotic   enough scans, but the price moves so much from day to day
+--             that tomorrow's range would be too wide to act on
+--   ok        a forecast is shown; the hour and weekday pattern as well
+--             once the same hours have been scanned on three days or more
+-- Views hide what fails this and say why; settings.showGuesses shows
+-- everything regardless, for curiosity.
+------------------------------------------------------------------------------
+S.MIN_SCANS = 8          -- scans needed before any forecast
+S.MIN_DAYS = 2           -- and the days they must span
+S.MAX_DAY_SD = 0.30      -- widest one-day range (log units) still worth showing
+
+function S.Trust(id)
+  local entry = S.ForItem(id)
+  local model = entry.model
+  local out = { forecast = false, pattern = false }
+  if not model then
+    out.state, out.why, out.short = "none", "No price has been recorded yet.", "No price recorded yet"
+    return out
+  end
+  local span = model.t[model.n] - model.t[1]
+  local _, sd = S.Eval(model, 1)
+  out.scans, out.days, out.swing = model.n, span, exp(sqrt(model.s2)) - 1
+  local watched = span >= 1 and (floor(span * 10 + 0.5) / 10 .. " days") or (floor(span * 24 + 0.5) .. " h")
+  if model.n < S.MIN_SCANS or span < S.MIN_DAYS then
+    out.state = "early"
+    out.short = "Too early to forecast (" .. model.n .. (model.n == 1 and " scan, " or " scans, ") .. watched .. ")"
+    out.why = "Too early to forecast: " .. model.n .. (model.n == 1 and " scan" or " scans") .. " over " .. watched
+      .. " so far. It takes at least " .. S.MIN_SCANS .. " scans over " .. S.MIN_DAYS .. " days."
+  elseif sd > S.MAX_DAY_SD then
+    out.state = "chaotic"
+    local pct = floor((exp(sd) - 1) * 100 + 0.5)
+    out.short = "Too unsettled to forecast (\194\177" .. pct .. "% in a day)"
+    out.why = "Too unsettled to forecast: by tomorrow this price could be " .. pct
+      .. "% either way, so a forecast would be a guess."
+  else
+    out.state, out.forecast = "ok", true
+    local hours = 0
+    for k = 0, 23 do
+      if (model.season.hn[k] or 0) >= 3 then hours = hours + 1 end
+    end
+    out.pattern = hours >= 2
+    if not out.pattern then
+      out.short = "No hour pattern yet: scan the same hours on 3 days"
+      out.why = "No hour-of-day pattern yet: it needs the same hours scanned on three or more days."
+    end
+  end
+  return out
+end
+
+-- What may be shown for an item: forecast, pattern, a short and a long
+-- reason for whatever is held back (nil when nothing is), and the judgment.
+function S.Show(id)
+  local t = S.Trust(id)
+  if ns.settings and ns.settings.showGuesses then return true, true, nil, nil, t end
+  if t.forecast and t.pattern then return true, true, nil, nil, t end
+  return t.forecast, t.pattern, t.short, t.why, t
+end
+
 -- The forecast for a moment `days` from now: price, lo, hi (the range it is
 -- likely within about two times in three), or nil without a price.
 function S.Forecast(id, days)

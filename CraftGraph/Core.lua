@@ -128,6 +128,7 @@ local DEFAULTS = {
   cut = 0.05,         -- auction house cut on a sale
   horizonDays = 2,    -- how long a batch may take to sell
   chartDays = 14,     -- how far back the price chart looks; 0 = everything
+  showGuesses = false, -- show forecasts and patterns even where they are only guesses
   srcOnline = true,   -- use Blizzard's hourly data when the sync tool has brought it in
   srcAuctionator = true, -- use Auctionator's prices and history where we have none
   srcSales = true,    -- use sales worked out from auctions that vanish between full scans
@@ -323,6 +324,15 @@ SlashCmdList["CRAFTGRAPH"] = function(msg)
   end
   if msg == "sell" then
     if ns.UI and ns.UI.OpenSell then ns.Safe(ns.UI.OpenSell) end
+    return
+  end
+  if msg == "guesses" then
+    ns.settings.showGuesses = not ns.settings.showGuesses
+    ns.Print(ns.settings.showGuesses and "forecasts and patterns are shown everywhere, also where they are only guesses."
+      or "forecasts and patterns are shown only where there is enough to go on.")
+    ns.generation = ns.generation + 1
+    ns.Fire("SOURCES")
+    ns.Fire("MARKET_UPDATED")
     return
   end
   if msg == "sources" or msg == "data" then

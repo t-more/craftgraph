@@ -268,6 +268,9 @@ function C.Update(f, id, opts)
   local past = min(limit, -firstDay)
   local span = max(past * 1.04, 0.08)
   local fwd = max(0.25, span * 0.2, 1 - span)
+  -- Where a forecast would only be a guess, the chart stops at now.
+  local showForecast, _, held = ns.Stats.Show(id)
+  if not showForecast then fwd = max(0.01, span * 0.03) end
   local t0, t1 = -span, fwd
   local known = max(t0, firstDay)
   local function X(day) return (day - t0) / (t1 - t0) * W end
@@ -415,13 +418,16 @@ function C.Update(f, id, opts)
   f.yBottom:SetText(ns.Money(lo))
   f.xLeft:SetText(past < 0.02 and "" or ns.Age(past * 86400))
   local scans = #series
-  if scans == 1 then
+  if not showForecast and held then
+    f.note:SetText(held)
+  elseif scans == 1 then
     f.note:SetText("1 scan so far: a first guess")
   elseif scans < 5 then
     f.note:SetText(scans .. " scans so far: still rough")
   else
     f.note:SetText("")
   end
+  f.held = not showForecast
   f.xNow:ClearAllPoints()
   f.xNow:SetPoint("BOTTOM", f, "BOTTOMLEFT", 2 + xNow, 0)
   f.xNow:Show()

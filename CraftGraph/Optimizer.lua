@@ -1843,6 +1843,8 @@ function J.BestMoment(id, priceNow)
   local base = priceNow or O.SalePrice(id)
   local entry = ns.Stats.ForItem(id)
   if not base or not entry.model then return nil end
+  -- No best hour is named for a price that cannot be forecast.
+  if not ns.Stats.Show(id) then return nil end
   local m0, sd0 = ns.Stats.Eval(entry.model, 0)
   local bestH, bestScore, bestM, bestSd = 0, 0, m0, sd0
   for h = 1, 168 do
@@ -2047,8 +2049,10 @@ end
 function D.Timing()
   local cut = ns.settings and ns.settings.cut or 0.05
   local rows = {}
+  local leftOut = 0
   local function Add(id, units, priceNow, craft)
     local best = J.BestMoment(id, priceNow)
+    if not best and units > 0 then leftOut = leftOut + 1 end
     if not best or units <= 0 then return end
     local extra = math.sqrt(max(best.sd * best.sd - best.sd0 * best.sd0, 0))
     local row = Finish({
@@ -2076,5 +2080,5 @@ function D.Timing()
     if a.profit ~= b.profit then return a.profit > b.profit end
     return a.id < b.id
   end)
-  return rows
+  return rows, leftOut
 end

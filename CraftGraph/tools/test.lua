@@ -188,6 +188,9 @@ local function FireEvent(event, ...)
 end
 FireEvent("ADDON_LOADED", "CraftGraph")
 FireEvent("PLAYER_LOGIN")
+-- Most checks below look at forecasts built from little data; the check
+-- that such guesses are hidden by default has its own section.
+ns.settings.showGuesses = true
 check(ns.db ~= nil and ns.realm ~= nil, "saved data initialised")
 
 local M, S, O, G = ns.Market, ns.Stats, ns.Opt, ns.Graph
@@ -1879,6 +1882,86 @@ do
   check(view.facts.text:find("Sells about", 1, true) ~= nil, "Trends says how fast it sells: " .. view.facts.text)
   ns.UI.ShowTrends(false)
   ns.realm.items[id], ns.realm.items[quiet] = nil, nil
+end
+
+------------------------------------------------------------------------------
+-- Forecasts that would only be guesses are held back, with the reason.
+do
+  local M, S, J = ns.Market, ns.Stats, ns.Jobs
+  ns.settings.showGuesses = false
+  ns.generation = ns.generation + 1
+  local early, wild, steady = 2601, 2602, 2603
+  for _, id in ipairs({ early, wild, steady }) do ns.realm.items[id] = nil end
+  -- Three scans in an afternoon.
+  for step = 2, 0, -1 do M.Record(early, { { 100 + step, 10 } }, { full = true, t = now - step * 3600 }) end
+  -- Five days of scans with the price all over the place.
+  local jump = { 1, 2.2, 0.6, 1.9, 0.5, 2.4, 0.7, 1.6, 0.4, 2.0 }
+  for step = 30, 0, -1 do
+    M.Record(wild, { { 1000 * jump[step % #jump + 1], 10 } }, { full = true, t = now - step * 14400 })
+  end
+  -- Six days, three scans a day at the same hours, a calm price.
+  local startDay = os.date("*t", now - 6 * 86400)
+  startDay.hour, startDay.min, startDay.sec = 0, 0, 0
+  local base = os.time(startDay)
+  for day = 0, 6 do
+    for _, hour in ipairs({ 9, 14, 20 }) do
+      local t = base + day * 86400 + hour * 3600
+      if t <= now then M.Record(steady, { { 500 + (hour == 20 and 25 or 0) + day, 50 } }, { full = true, t = t }) end
+    end
+  end
+  local te, tw, ts = S.Trust(early), S.Trust(wild), S.Trust(steady)
+  check(te.state == "early" and not te.forecast and te.short:find("Too early", 1, true), "three scans: too early to forecast (" .. te.short .. ")")
+  check(tw.state == "chaotic" and not tw.forecast and tw.short:find("unsettled", 1, true), "a wild price: too unsettled to forecast (" .. tostring(tw.short) .. ")")
+  check(ts.state == "ok" and ts.forecast and ts.pattern, "a calm price scanned at the same hours for six days: forecast and pattern shown")
+  check(S.Trust(999998).state == "none", "an item without prices is neither")
+
+  -- The side panel: history chart stops at now, the folded view keeps its dots and drops its curves.
+  ns.Open(early) RunTimers()
+  local side
+  for _, fr in ipairs(frames) do if fr.week and fr.chartMode then side = fr end end
+  ns.settings.sideChart = "history"
+  ns.UI.Refresh() RunTimers()
+  local chartFrame
+  for _, fr in ipairs(frames) do if fr.plot and fr.clocks then chartFrame = fr end end
+  check(chartFrame.held == true and chartFrame.note.text:find("Too early", 1, true) ~= nil, "the price chart says why it has no forecast: " .. chartFrame.note.text)
+  ns.settings.sideChart = "week"
+  ns.UI.Refresh() RunTimers()
+  check(side.week.held and side.week.nLine == 0 and side.week.nDot == 3, "the folded view shows the three scans and no curves")
+  check(side.week.readout.text:find("Too early", 1, true) ~= nil and side.week.readout.text:find("/cg guesses", 1, true) ~= nil,
+    "its readout gives the reason and the way to see the guess")
+  check(J.BestMoment(early, 100) == nil, "no best selling hour is named for it")
+  ns.UI.Focus(wild) RunTimers()
+  check(side.week.held and side.week.readout.text:find("unsettled", 1, true) ~= nil, "the wild price is held back as unsettled")
+  ns.UI.Focus(steady) RunTimers()
+  check(not side.week.held and side.week.nLine >= 167, "the calm price gets its curves")
+  check(J.BestMoment(steady, 500) ~= nil, "and a best selling hour")
+  ns.settings.sideChart = "history"
+  ns.UI.Refresh() RunTimers()
+  check(chartFrame.held == false, "and a forecast on its chart")
+  -- Trends says it in the facts and in the readout.
+  ns.UI.Focus(early) RunTimers()
+  ns.UI.ShowTrends(true) RunTimers()
+  local view
+  for _, fr in ipairs(frames) do if fr.options and fr.facts then view = fr end end
+  check(view.facts.text:find("Too early to forecast", 1, true) ~= nil, "Trends says it is too early")
+  check(view.readout.text:find("would be a guess", 1, true) ~= nil, "and gives no estimate for the selected time")
+  -- For curiosity: everything is shown again.
+  SlashCmdList.CRAFTGRAPH("guesses") RunTimers()
+  check(ns.settings.showGuesses == true and view.readout.text:find("about", 1, true) ~= nil, "/cg guesses shows the estimate anyway")
+  ns.UI.ShowTrends(false)
+  ns.settings.sideChart = "week"
+  ns.UI.Refresh() RunTimers()
+  check(not side.week.held and side.week.nLine >= 167 and J.BestMoment(early, 100) ~= nil, "and the curves and the best hour")
+  ns.UI.ToggleSources()
+  check(ns.UI.sourcesFrame.guess:GetChecked() == true, "the data window has the same switch, ticked")
+  ns.UI.sourcesFrame.guess:SetChecked(false)
+  ns.UI.sourcesFrame.guess.scripts.OnClick(ns.UI.sourcesFrame.guess)
+  check(ns.settings.showGuesses == false, "unticking it hides the guesses again")
+  ns.UI.ToggleSources()
+  ns.settings.sideChart = "history"
+  ns.settings.showGuesses = true
+  ns.generation = ns.generation + 1
+  for _, id in ipairs({ early, wild, steady }) do ns.realm.items[id] = nil end
 end
 
 ------------------------------------------------------------------------------

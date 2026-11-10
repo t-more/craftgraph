@@ -66,6 +66,16 @@ How fast things sell
   With scans hours apart a busy item reads too low and is shown as "at
   least". Trends shows the rate and which sellers' auctions sold.
 
+When a forecast is not worth showing
+  A forecast from a handful of scans, or for a price that jumps about, is a
+  guess. Until an item has at least 8 scans over 2 days, or while its price
+  could be more than about a third either way by tomorrow, CraftGraph shows
+  only what the scans saw: the chart stops at now, the folded views show the
+  scans without curves, plans show the profit for selling right away only,
+  and no best selling hour is named. Each place says why. To see the guesses
+  anyway, tick "Show forecasts that are only guesses" in the data sources
+  window or type /cg guesses.
+
 Data sources
   Your own scans always count. Three second opinions can be switched off
   and on to see what each one changes: Blizzard's hourly data (optional

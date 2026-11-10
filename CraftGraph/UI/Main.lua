@@ -650,11 +650,19 @@ local function AddProjection(proj)
   if not proj or not proj.now then return end
   GameTooltip:AddLine(" ")
   GameTooltip:AddLine(proj.fixed and "Profit" or "Profit if it sells ...", 1, 0.82, 0)
-  for _, row in ipairs(proj.rows) do
-    local range = row.lo ~= row.hi and (GREY .. "  (" .. ns.Money(row.lo) .. " to " .. ns.Money(row.hi) .. ")|r") or ""
-    GameTooltip:AddDoubleLine(row.label, Signed(row.profit) .. range, 1, 1, 1, 1, 1, 1)
+  -- Later moments are shown only when this price can be forecast.
+  local showForecast, _, _, why = true, true, nil, nil
+  if proj.id and not proj.fixed then showForecast, _, _, why = ns.Stats.Show(proj.id) end
+  for i, row in ipairs(proj.rows) do
+    if i == 1 or showForecast then
+      local range = row.lo ~= row.hi and (GREY .. "  (" .. ns.Money(row.lo) .. " to " .. ns.Money(row.hi) .. ")|r") or ""
+      GameTooltip:AddDoubleLine(row.label, Signed(row.profit) .. range, 1, 1, 1, 1, 1, 1)
+    end
   end
-  if proj.best then
+  if not showForecast then
+    GameTooltip:AddLine((why or "") .. " Later sale times are left out. /cg guesses shows them.", 1, 0.55, 0.2, true)
+  end
+  if proj.best and showForecast then
     GameTooltip:AddDoubleLine("best hour this week: " .. proj.best.label, Signed(proj.best.profit),
       0.45, 0.75, 1, 1, 1, 1)
   end
@@ -995,8 +1003,10 @@ function UI.UpdateWorth()
       note = Deals.Example(sorted[1] or list[1])
     end
   elseif worthFilter == "later" then
-    note = #list == 0 and (GREY .. "Nothing in your bags or bank is worth listing, and nothing you know pays to make.|r")
-      or (GREY .. "Profit is what waiting for that hour should add over selling now. Hover a row for the numbers.|r")
+    local _, left = Deals.Timing()
+    local leftOut = (left or 0) > 0 and (" " .. left .. " left out: too early or too unsettled to time (/cg guesses shows them).") or ""
+    note = #list == 0 and (GREY .. "Nothing to time yet." .. leftOut .. "|r")
+      or (GREY .. "Profit is what waiting for that hour should add over selling now." .. leftOut .. "|r")
   elseif next(info.unverified) then
     local names = {}
     for id in pairs(info.unverified) do names[#names + 1] = ns.Data.skills[id] or "?" end
@@ -1628,7 +1638,13 @@ function UI.UpdateWeekStrip(f, id)
   local lo, hi = math.huge, 0
   local nowHour, today = tonumber(date("%H")) or 0, tonumber(date("%w")) or 0
   local differs = false
-  if week then
+  -- The curves are drawn only where a pattern is worth showing; the scans
+  -- themselves are always drawn.
+  local _, showPattern, held = false, false, nil
+  if week then _, showPattern, held = ns.Stats.Show(id) end
+  local curves = week and showPattern
+  f.held = week and not showPattern or false
+  if curves then
     for index = 0, count - 1 do
       local est, projected
       if dayMode then
@@ -1679,7 +1695,7 @@ function UI.UpdateWeekStrip(f, id)
       line:SetEndPoint("BOTTOMLEFT", plot, x2, y2)
       line:Show()
     end
-    for index = 0, count - 1 do
+    for index = 0, (curves and count - 1 or -1) do
       -- The likely range as a faint column behind the curve.
       local bar = f.bars[index + 1]
       if not bar then
@@ -1717,8 +1733,8 @@ function UI.UpdateWeekStrip(f, id)
     f.empty:Hide()
     f.scaleTop:SetText(ns.Money(hi))
     f.scaleBottom:SetText(ns.Money(lo))
-    f.legend:SetText(GOLD .. "usual|r" .. (differs and "  |cff73bfffnext " .. (dayMode and "24 h" or "7 days") .. "|r" or "")
-      .. "  " .. GREY .. "dots: scans,|r " .. UI.ScanAgeText(id))
+    f.legend:SetText((curves and (GOLD .. "usual|r" .. (differs and "  |cff73bfffnext " .. (dayMode and "24 h" or "7 days") .. "|r" or "")
+      .. "  ") or "") .. GREY .. "dots: scans,|r " .. UI.ScanAgeText(id))
   else
     f.empty:SetText("No price recorded yet.")
     f.empty:Show()
@@ -1726,7 +1742,7 @@ function UI.UpdateWeekStrip(f, id)
     f.scaleBottom:SetText("")
     f.legend:SetText("")
   end
-  for i = (week and hi > 0) and (count + 1) or 1, #f.bars do f.bars[i]:Hide() end
+  for i = (curves and hi > 0) and (count + 1) or 1, #f.bars do f.bars[i]:Hide() end
   for i = nLine + 1, #f.lines do f.lines[i]:Hide() end
   for i = nDot + 1, #f.dots do f.dots[i]:Hide() end
   f.nLine, f.nDot, f.differs = nLine, nDot, differs
@@ -1771,6 +1787,11 @@ function UI.TrendReadout(id, mode, compact)
     local when = day and (DAY_LONG[day] .. " " .. HourText(hour)) or (HourText(hour) .. ", any day")
     local week = ns.Stats.Week(id)
     if not week then return GOLD .. when .. "|r\n" .. GREY .. "No price recorded yet.|r", nil end
+    local _, showPattern, held = ns.Stats.Show(id)
+    if not showPattern then
+      return GOLD .. when .. "|r\n|cffff8c33" .. (held or "") .. "|r\n" .. GREY
+        .. "Not shown: it would be a guess. /cg guesses shows it.|r", nil
+    end
     local est = ns.Stats.WeekAt(week, day, hour)
     local text = GOLD .. when .. ":|r usually " .. ns.Money(est.price) .. GREY .. " (" .. ns.Money(est.lo)
       .. " to " .. ns.Money(est.hi) .. ")|r\n"
@@ -1805,6 +1826,13 @@ function UI.TrendReadout(id, mode, compact)
   end
   local week = ns.Stats.Week(id)
   if not week then return GOLD .. when .. ":|r no price recorded yet.", nil end
+  do
+    local _, showPattern, _, why = ns.Stats.Show(id)
+    if not showPattern then
+      return GOLD .. when .. ":|r |cffff8c33" .. (why or "") .. "|r " .. GREY
+        .. "An estimate for this time would be a guess, so none is shown. Type /cg guesses to see it anyway.|r", nil
+    end
+  end
   local est = ns.Stats.WeekAt(week, day, hour)
   local function Basis(n, gap, one, many, around)
     if n and n > 0 then return n .. " " .. (n == 1 and one or many) end
@@ -1886,6 +1914,12 @@ function UI.UpdateTrends()
       facts[#facts + 1] = "Too few scans over the last week to call a direction yet (" .. t.scans
         .. " in all). A direction needs four scans over at least a day."
     end
+  end
+
+  -- Say so when this price cannot be forecast yet.
+  do
+    local _, _, _, why = ns.Stats.Show(id)
+    if why and t then facts[#facts + 1] = "|cffff8c33" .. why .. "|r" end
   end
 
   -- How fast it sells, from the auctions that vanished between full scans.
@@ -3320,6 +3354,7 @@ local function UpdateSources()
     row.check:SetChecked(ns.Market.Source(row.def.key))
     row.note:SetText(GREY .. row.def.note() .. "|r")
   end
+  sourcesFrame.guess:SetChecked(ns.settings.showGuesses and true or false)
 end
 
 function UI.ToggleSources()
@@ -3364,6 +3399,27 @@ function UI.ToggleSources()
       note:SetPoint("TOPLEFT", label, "BOTTOMLEFT", 0, -2)
       f.rows[i] = { check = check, note = note, def = def }
     end
+    -- Not a source: whether to show forecasts that are only guesses.
+    local gy = -58 - #SOURCES * 38
+    local guess = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+    guess:SetSize(24, 24)
+    guess:SetPoint("TOPLEFT", 10, gy)
+    guess:SetScript("OnClick", function(self)
+      ns.settings.showGuesses = self:GetChecked() and true or false
+      ns.generation = ns.generation + 1
+      ns.Fire("MARKET_UPDATED")
+    end)
+    Tip(guess, "Show guesses", "Normally a forecast or an hour-and-weekday pattern is shown only when there is "
+      .. "enough to go on: at least 8 scans over 2 days, and a price that does not jump about too much. "
+      .. "Tick this to see them everywhere, for curiosity.")
+    local glabel = Text(f, "GameFontHighlight")
+    glabel:SetPoint("TOPLEFT", guess, "TOPRIGHT", 2, -2)
+    glabel:SetText("Show forecasts that are only guesses")
+    local gnote = Text(f, "GameFontDisableSmall")
+    gnote:SetPoint("TOPLEFT", glabel, "BOTTOMLEFT", 0, -2)
+    gnote:SetText("off: hidden where they would mislead")
+    f.guess = guess
+    f:SetHeight(62 + (#SOURCES + 1) * 38)
     tinsert(UISpecialFrames, "CraftGraphSources")
     f:Hide()
     sourcesFrame = f

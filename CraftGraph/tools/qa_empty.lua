@@ -11,6 +11,7 @@ local ns = wow.load("CraftGraph.toc")
 wow.fire("ADDON_LOADED", "CraftGraph")
 wow.fire("PLAYER_LOGIN")
 wow.runTimers()
+wow.check(ns.settings.showGuesses == false, "guesses are hidden on a new install")
 local slash = SlashCmdList.CRAFTGRAPH
 local function errs() local n = 0 for _, l in ipairs(ns.db.log) do if l:find("ERROR") then n = n + 1 print(l:sub(1, 500)) end end return n end
 slash("") wow.runTimers()

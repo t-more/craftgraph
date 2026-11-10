@@ -30,3 +30,13 @@ if [ -z "$dry" ] && [ ! -f "$addons/CraftGraph/Data/Online.lua" ]; then
   cp "$here/CraftGraph/sync/Online.stub.lua" "$addons/CraftGraph/Data/Online.lua"
 fi
 [ -n "$dry" ] && echo "(nothing was changed)" || echo "Installed into $addons/CraftGraph"
+# A short command for the optional setup page and tool, when Python 3 is
+# there: craftgraph-setup and craftgraph-sync, run from the game's copy so
+# they find the game's saved data.
+if [ -z "$dry" ] && command -v python3 >/dev/null 2>&1 && [ -d "$HOME/.local/bin" ]; then
+  for name in setup sync; do
+    printf '#!/bin/sh\nexec python3 "%s/CraftGraph/sync/craftgraph_%s.py" "$@"\n' "$addons" "$name" > "$HOME/.local/bin/craftgraph-$name"
+    chmod +x "$HOME/.local/bin/craftgraph-$name"
+  done
+  echo "Python 3 found: 'craftgraph-setup' opens the setup page, 'craftgraph-sync' is the tool."
+fi

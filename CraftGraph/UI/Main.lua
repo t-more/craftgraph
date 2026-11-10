@@ -472,12 +472,11 @@ local function CreatePanel(parent)
   planHeader:SetText("Steps, cheapest way")
   p.planHeader = planHeader
   y = y - 18
-  p.plan = Text(p, "GameFontHighlightSmall")
-  p.plan:SetPoint("TOPLEFT", 14, y)
-  p.plan:SetPoint("BOTTOMRIGHT", -12, 8)
-  p.plan:SetJustifyV("TOP")
-  p.plan:SetSpacing(3)
-  p.plan:SetWordWrap(true)
+  p.stepLines = UI.CreateStepLines(p, 6, 50)
+  for i, line in ipairs(p.stepLines) do
+    line:SetPoint("TOPLEFT", 14, y - (i - 1) * 17)
+    line:SetPoint("TOPRIGHT", -12, y - (i - 1) * 17)
+  end
   return p
 end
 
@@ -532,12 +531,23 @@ local function PlanText(plan, graph)
   return table.concat(lines, "\n")
 end
 
--- The steps of a plan as numbered lines: what to do, what it costs or
--- brings, and where to go. The step that is next is marked for a planned
--- item. The space under the chart holds about nine lines.
-function UI.StepsText(steps, planned, limit)
-  limit = limit or 6
-  local lines, at = {}, {}
+-- The steps of a plan as lines, each with a button for what can be done
+-- from here: what to do, what it costs or brings, and where to go. Used by
+-- the side panel and the plan window.
+--   opts.limit   the most lines to show
+--   opts.where   add a line saying where to go, while there is room
+-- A planned item marks the step that is next, and folds what is finished
+-- away under "Completed".
+function UI.StepEntries(id, qty, job, opts)
+  opts = opts or {}
+  local limit = opts.limit or 6
+  local J = ns.Jobs
+  local pin = job and job.pin
+  local planned = pin ~= nil
+  local steps = J.Steps(id, qty, job)
+  local done = planned and J.StepsDone(job) or {}
+  local room = limit - (#done > 0 and 1 or 0)
+  local entries = {}
   for i, step in ipairs(steps) do
     local money = ""
     if step.cost and step.cost > 0 then money = GREY .. "  costs |r" .. ns.Money(step.cost) end
@@ -545,35 +555,121 @@ function UI.StepsText(steps, planned, limit)
       money = GREY .. "  brings |r" .. ns.Money(step.gain) .. (step.cutPaid and (GREY .. " after the cut|r") or "")
     end
     local head = (planned and step.now) and "|cffffd100Next: " or ("|cffffd100" .. i .. ". ")
-    lines[#lines + 1] = head .. "|r" .. step.text .. money
-    at[#at + 1] = step
+    entries[#entries + 1] = { text = head .. "|r" .. step.text .. money, step = step,
+      action = J.StepAction(step, job), tip = step.where }
   end
-  if #steps == 0 then lines[1] = GREY .. "Nothing to do: you hold everything.|r" end
-  if #lines > limit then
-    local extra = #lines - limit + 1
-    while #lines > limit - 1 do table.remove(lines) table.remove(at) end
-    lines[#lines + 1] = GREY .. "... and " .. extra .. " more steps (hover the plan window)|r"
+  if #steps == 0 and #done == 0 then
+    entries[1] = { text = GREY .. "Nothing to do: you hold everything.|r" }
   end
-  -- Where to go, while there is room: first for the step that is next,
-  -- then for anything that has to be found (a vendor, a missing source).
-  local room, chosen = limit - #lines, {}
-  local function pick(want)
-    for _, step in ipairs(at) do
-      if room > 0 and step.where and not chosen[step] and want(step) then
-        chosen[step] = true
-        room = room - 1
+  if #entries > room then
+    local extra = #entries - room + 1
+    while #entries > room - 1 do table.remove(entries) end
+    entries[#entries + 1] = { text = GREY .. "... and " .. extra .. " more steps|r" }
+  end
+  -- Where to go, while there is room: for a missing source, for the step
+  -- that is next, and for anything bought from a vendor.
+  if opts.where then
+    local left, chosen = room - #entries, {}
+    local function pick(want)
+      for _, e in ipairs(entries) do
+        if left > 0 and e.step and e.step.where and not chosen[e] and want(e.step) then
+          chosen[e] = true
+          left = left - 1
+        end
+      end
+    end
+    pick(function(step) return step.kind == "stuck" end)
+    pick(function(step) return planned and step.now end)
+    pick(function(step) return step.kind == "vendor" end)
+    local out = {}
+    for _, e in ipairs(entries) do
+      out[#out + 1] = e
+      if chosen[e] then out[#out + 1] = { text = GREY .. "    " .. e.step.where .. "|r" } end
+    end
+    entries = out
+  end
+  -- What is finished: one line to fold it open, then the steps in grey.
+  if #done > 0 then
+    entries[#entries + 1] = { fold = pin, text = GREY .. (pin.showDone and "- " or "+ ") .. "Completed (" .. #done .. ")|r",
+      tip = "Click to " .. (pin.showDone and "fold away" or "show") .. " the steps that are finished." }
+    if pin.showDone then
+      for _, step in ipairs(done) do
+        if #entries < limit + #done then
+          entries[#entries + 1] = { text = GREY .. "    done: " .. step.text .. "|r", done = true }
+        end
       end
     end
   end
-  pick(function(step) return step.kind == "stuck" end)
-  pick(function(step) return planned and step.now end)
-  pick(function(step) return step.kind == "vendor" end)
-  local out = {}
-  for i, line in ipairs(lines) do
-    out[#out + 1] = line
-    if at[i] and chosen[at[i]] then out[#out + 1] = GREY .. "    " .. at[i].where .. "|r" end
+  return entries, steps, done
+end
+
+-- `count` lines for step entries, stacked downwards from (x, y) in `parent`.
+function UI.CreateStepLines(parent, count, buttonWidth)
+  local lines = {}
+  for i = 1, count do
+    local line = CreateFrame("Button", nil, parent)
+    line:SetHeight(17)
+    line.text = Text(line, "GameFontHighlightSmall")
+    line.text:SetPoint("LEFT", 0, 0)
+    line.text:SetPoint("RIGHT", -(buttonWidth + 6), 0)
+    line.text:SetWordWrap(false)
+    line.button = Button(line, "", buttonWidth)
+    line.button:SetHeight(16)
+    line.button:SetPoint("RIGHT", 0, 0)
+    -- A greyed button still says, on hover, where it will work.
+    if line.button.SetMotionScriptsWhileDisabled then line.button:SetMotionScriptsWhileDisabled(true) end
+    line.button:SetScript("OnClick", function(self)
+      if self.fn then ns.Safe(self.fn) end
+    end)
+    line.button:SetScript("OnEnter", function(self)
+      if not self.tip then return end
+      GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+      GameTooltip:SetText(self.title or "This step")
+      GameTooltip:AddLine(self.tip, 1, 1, 1, true)
+      GameTooltip:Show()
+    end)
+    line.button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    line:SetScript("OnClick", function(self)
+      local e = self.entry
+      if e and e.fold then
+        e.fold.showDone = not e.fold.showDone or nil
+        ns.Fire("JOBS")
+      end
+    end)
+    line:SetScript("OnEnter", function(self)
+      local e = self.entry
+      if not e then return end
+      GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+      GameTooltip:SetText(e.step and e.step.text or (e.fold and "Completed" or "Step"), 1, 0.82, 0, 1, true)
+      if e.tip then GameTooltip:AddLine(e.tip, 1, 1, 1, true) end
+      GameTooltip:Show()
+    end)
+    line:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    lines[i] = line
   end
-  return table.concat(out, "\n")
+  return lines
+end
+
+-- Shows entries on lines; returns how many lines are in use.
+function UI.FillStepLines(lines, entries)
+  for i, line in ipairs(lines) do
+    local e = entries[i]
+    line.entry = e
+    if e then
+      line.text:SetText(e.text)
+      local a = e.action
+      line.button:SetShown(a ~= nil)
+      if a then
+        line.button:SetText(a.text)
+        line.button:SetEnabled(a.enabled and true or false)
+        line.button.fn, line.button.tip, line.button.title = a.enabled and a.fn or nil, a.tip, e.step and e.step.text
+      end
+      line:Show()
+    else
+      line:Hide()
+    end
+  end
+  return math.min(#entries, #lines)
 end
 
 local function UpdatePanel()
@@ -750,7 +846,8 @@ local function UpdatePanel()
   local planned = state.job and state.job.pin and state.job.pin.id == id
   p.planHeader:SetText(planned and "Your plan, step by step" or "Steps, cheapest way")
   p.steps = ns.Jobs.Steps(id, qty, state.job)
-  p.plan:SetText(UI.StepsText(p.steps, planned))
+  p.stepEntries = UI.StepEntries(id, qty, state.job, { limit = 6, where = true })
+  UI.FillStepLines(p.stepLines, p.stepEntries)
 end
 
 ------------------------------------------------------------------------------
@@ -2754,7 +2851,7 @@ end
 -- buy at auction, collect mail, buy from a vendor, craft, post.
 ------------------------------------------------------------------------------
 local hud
-local HUD_W, HUD_ROW = 370, 66
+local HUD_W, HUD_ROW, HUD_HEAD = 370, 66, 44
 local KIND_COLOR = {
   ah = { 1, 0.82, 0 }, mail = { 0.45, 0.75, 1 }, vendor = { 0.4, 1, 0.4 }, craft = { 1, 0.6, 0.25 },
   sell = { 0.4, 1, 0.4 }, done = { 0.6, 0.6, 0.6 }, stuck = { 1, 0.35, 0.3 },
@@ -2829,6 +2926,7 @@ local function CreateHUD()
   end)
 
   hud.rows = {}
+  hud.lines = {}          -- step lines, made as they are needed
   for i = 1, ns.Jobs.MAX_PINS do
     local row = CreateFrame("Button", nil, hud)
     row:SetHeight(HUD_ROW - 2)
@@ -2983,17 +3081,38 @@ function UI.UpdateHUD()
     return
   end
   if not hud then CreateHUD() end
+  local y, used = -24, 0
   for i, row in ipairs(hud.rows) do
     local job = jobs[i]
     row.job = job
     if job then
+      -- The item, then its steps with their buttons, then what is finished.
+      row:ClearAllPoints()
+      row:SetPoint("TOPLEFT", 6, y)
+      row:SetPoint("TOPRIGHT", -6, y)
+      row:SetHeight(HUD_HEAD - 2)
+      y = y - HUD_HEAD
+      local entries = UI.StepEntries(nil, nil, job, { limit = 7 })
+      row.entries = entries
+      for _, e in ipairs(entries) do
+        used = used + 1
+        if not hud.lines[used] then
+          hud.lines[used] = UI.CreateStepLines(hud, 1, 54)[1]
+        end
+        local line = hud.lines[used]
+        line:ClearAllPoints()
+        line:SetPoint("TOPLEFT", 44, y)
+        line:SetPoint("TOPRIGHT", -10, y)
+        UI.FillStepLines({ line }, { e })
+        y = y - 17
+      end
+      y = y - 4
       local r, g, b = ns.ItemColor(job.pin.id)
       row.icon:SetTexture(ns.ItemIcon(job.pin.id))
       row.name:SetText(ns.ItemName(job.pin.id) .. " |cffffffffx" .. job.pin.qty .. "|r")
       row.name:SetTextColor(r, g, b)
-      local c = KIND_COLOR[job.kind] or KIND_COLOR.ah
-      row.status:SetText(job.text)
-      row.status:SetTextColor(c[1], c[2], c[3])
+      -- The next step is the first of the lines below, with its button.
+      row.status:SetText("")
       row.goal:SetText(UI.GoalText(job.pin))
       row:Show()
     else
@@ -3005,7 +3124,9 @@ function UI.UpdateHUD()
   elseif ns.Jobs.place == "merchant" then where = "at a vendor"
   elseif ns.Jobs.place == "mail" then where = "at the mailbox" end
   hud.where:SetText(where)
-  local height = 30 + #jobs * HUD_ROW
+  for i = used + 1, #hud.lines do hud.lines[i]:Hide() end
+  hud.usedLines = used
+  local height = 6 - y
   hud.buy:Hide()
   if ns.Jobs.place == "merchant" then
     local offer, total = ns.Jobs.MerchantOffer()

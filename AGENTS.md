@@ -41,6 +41,11 @@ the human judge the effort. Friends get it as a zip, so it must work from the zi
 13. **Every graph over time has a smoothing period the player chooses**, in minutes or hours,
     with "auto" as the default. Raw scans stay visible beside the smoothed line.
 14. **Small and fast inside the game.** One saved file, packed history, work spread over frames.
+15. **A plan is a list of steps, each with a button.** Buy, mailbox, vendor (with where), bank,
+    craft, post, in the order to do them. A button is live only where the step can be done and
+    says where that is; finished steps fold away. The same list in the plan window and the graph.
+16. **Profit is after the auction house's cut, and beside it what could be lost.** Name the cut
+    in coins; show the bad case (estimate less twice its margin), red when it is a loss.
 
 ## Legal footing
 - A prototype among friends, given as is; each user answers for their own use. `LEGAL.md` says

@@ -1083,16 +1083,16 @@ function J.Steps(id, qty, job)
     return total
   end
   if next(needs.missing) then
-    steps[#steps + 1] = { kind = "stuck", text = "No source for " .. NameList(needs.missing, 2),
+    steps[#steps + 1] = { kind = "stuck", key = "stuck", text = "No source for " .. NameList(needs.missing, 2),
       where = "Not at auction in the last scan and not sold by a vendor. Scan again, or farm it." }
   end
   if next(needs.ah) then
-    steps[#steps + 1] = { kind = "ah", text = "Buy at auction: " .. NameList(needs.ah, 3),
+    steps[#steps + 1] = { kind = "ah", key = "ah", items = needs.ah, text = "Buy at auction: " .. NameList(needs.ah, 3),
       where = "At any auction house. The plan window has a Buy button there.",
       cost = costOf(needs.ah, plan and plan.buyCost, plan and plan.buy or {}) }
   end
   if next(needs.ah) or next(needs.mail) then
-    steps[#steps + 1] = { kind = "mail", text = "Pick up " .. ns.Round(Total(needs.ah) + Total(needs.mail))
+    steps[#steps + 1] = { kind = "mail", key = "mail", text = "Pick up " .. ns.Round(Total(needs.ah) + Total(needs.mail))
       .. " from the mailbox", where = "What you buy at auction arrives by mail, at any mailbox." }
   end
   -- One step for each place a vendor item is sold.
@@ -1109,21 +1109,22 @@ function J.Steps(id, qty, job)
   for _, where in ipairs(order) do
     local cost = 0
     for item, k in pairs(places[where]) do cost = cost + (M.VendorBuy(item) or 0) * k end
-    steps[#steps + 1] = { kind = "vendor", text = "Buy from a vendor: " .. NameList(places[where], 3),
+    steps[#steps + 1] = { kind = "vendor", key = "vendor:" .. where, items = places[where],
+      text = "Buy from a vendor: " .. NameList(places[where], 3),
       where = "At " .. where .. ".", cost = cost }
   end
   if next(needs.bank) then
-    steps[#steps + 1] = { kind = "bank", text = "Take from the bank: " .. NameList(needs.bank, 3), where = "At any bank." }
+    steps[#steps + 1] = { kind = "bank", key = "bank", text = "Take from the bank: " .. NameList(needs.bank, 3), where = "At any bank." }
   end
   for _, c in ipairs(needs.crafts) do
-    steps[#steps + 1] = { kind = "craft", text = "Craft " .. ns.Data.recipes[c.spell][6] .. " x" .. ns.Round(c.casts),
-      spell = c.spell }
+    steps[#steps + 1] = { kind = "craft", key = "craft:" .. c.spell,
+      text = "Craft " .. ns.Data.recipes[c.spell][6] .. " x" .. ns.Round(c.casts), spell = c.spell, casts = c.casts }
   end
   -- The last step: where the money comes back.
   local goal = pin and pin.goal
   local cut = ns.settings and ns.settings.cut or 0.05
   if goal and goal.kind == "tovendor" then
-    steps[#steps + 1] = { kind = "sell", text = "Sell " .. ns.Round(qty) .. " to a vendor",
+    steps[#steps + 1] = { kind = "sell", key = "sell", toVendor = true, text = "Sell " .. ns.Round(qty) .. " to a vendor",
       where = "Any vendor buys it. No auction cut.", gain = ns.VendorSell(id) * qty }
   elseif goal or (plan and plan.craftable) then
     local each = goal and goal.sellEach or (M.Info(id) and M.Info(id).price)
@@ -1131,7 +1132,7 @@ function J.Steps(id, qty, job)
     local units = qty
     if not goal then units = max(qty, O.Plan(id, qty).produced or qty) end
     local gross = each and each * units or nil
-    steps[#steps + 1] = { kind = "sell", text = "Post " .. ns.Round(units) .. " at the auction house",
+    steps[#steps + 1] = { kind = "sell", key = "sell", item = id, text = "Post " .. ns.Round(units) .. " at the auction house",
       where = gross and ("The auction house keeps " .. ns.Round(cut * 100) .. "% of the sale: "
         .. ns.Money(gross * cut) .. " of " .. ns.Money(gross) .. ".") or "No auction price is known yet.",
       gain = gross and gross * (1 - cut) or nil, cutPaid = gross and gross * cut or nil }
@@ -1144,6 +1145,140 @@ function J.Steps(id, qty, job)
   end
   if not kind and steps[1] then steps[1].now = true end
   return steps
+end
+
+-- The steps of a planned item that are finished: those the whole plan has
+-- (worked out as if nothing were held) that are no longer open. Something
+-- half done stays open with what is left.
+local ZERO = { __index = function() return 0 end }
+function J.StepsDone(job)
+  local pin = job and job.pin
+  if not pin then return {} end
+  local whole = J.Needs(pin.id, pin.qty, { total = setmetatable({}, ZERO), bags = setmetatable({}, ZERO) },
+    setmetatable({}, ZERO), pin.use)
+  local all = J.Steps(nil, nil, { needs = whole, remaining = pin.qty, inBags = 0, pin = pin, kind = "none" })
+  local open = {}
+  for _, step in ipairs(J.Steps(nil, nil, job)) do open[step.key] = true end
+  local done = {}
+  local finished = job.remaining <= 0 and job.inBags <= 0          -- everything is posted
+  for _, step in ipairs(all) do
+    if step.key ~= "stuck" and (not open[step.key] or finished) and (step.key ~= "sell" or finished) then
+      step.done, step.now = true, nil
+      done[#done + 1] = step
+    end
+  end
+  return done
+end
+
+-- Takes the things bought at auction out of the mailbox, one letter at a
+-- time. Only letters that are a won auction are touched. Must be at a
+-- mailbox. Returns false with the reason when it cannot.
+local taking = false
+function J.TakeMail()
+  if J.place ~= "mail" then return false, "Open a mailbox first." end
+  if not (GetInboxNumItems and GetInboxInvoiceInfo and AutoLootMailItem) then
+    return false, "This game version does not let addons take mail. Take it yourself."
+  end
+  if taking then return false, "Already taking the mail." end
+  taking = true
+  local function nextLetter()
+    if J.place ~= "mail" then taking = false return end
+    for i = GetInboxNumItems(), 1, -1 do
+      if GetInboxInvoiceInfo(i) == "buyer" then
+        AutoLootMailItem(i)
+        C_Timer.After(0.6, nextLetter)
+        return
+      end
+    end
+    taking = false
+    ns.Fire("JOBS")
+  end
+  nextLetter()
+  return true
+end
+
+-- What a step's button does here and now: { text, enabled, tip, fn }, or
+-- nil when the step has nothing to press. A button is live only where the
+-- step can be done: at the auction house, at a vendor that sells it, at a
+-- mailbox, or with the materials in the bags.
+function J.StepAction(step, job)
+  if not step or step.done then return nil end
+  local a = { enabled = false }
+  if step.kind == "ah" then
+    local names = {}
+    for item in pairs(step.items or {}) do names[#names + 1] = item end
+    table.sort(names, function(x, y) return ns.ItemName(x) < ns.ItemName(y) end)
+    local item = names[1]
+    local qty = item and ns.Round(step.items[item]) or 0
+    a.text = "Buy"
+    if not item then return nil end
+    if not M.ahOpen then
+      a.tip = "Go to an auction house. This then buys " .. ns.ItemName(item) .. " x" .. qty .. "."
+    elseif J.Busy() then
+      a.tip = "Still busy with the last purchase."
+    else
+      a.enabled = true
+      a.tip = "Buys " .. ns.ItemName(item) .. " x" .. qty .. " at the price the plan expects; if it has risen by more "
+        .. "than a few percent nothing is bought." .. (#names > 1 and " One item for each press." or "")
+      a.fn = function() J.BuyAuction(item, qty) end
+    end
+  elseif step.kind == "mail" then
+    a.text = "Take"
+    if J.place ~= "mail" then
+      a.tip = "Go to a mailbox. This then takes what you bought at auction."
+    else
+      a.enabled = true
+      a.tip = "Takes the auctions you won out of the mailbox, one letter at a time. Other mail is left alone."
+      a.fn = function()
+        local ok, why = J.TakeMail()
+        if not ok then ns.Print(why) end
+      end
+    end
+  elseif step.kind == "vendor" then
+    a.text = "Buy"
+    local want = {}
+    for item, k in pairs(step.items or {}) do want[item] = ns.Round(k) end
+    if J.place ~= "merchant" then
+      a.tip = "Go to a vendor that sells it. " .. (step.where or "")
+    elseif #J.MerchantOffer(want, true) == 0 then
+      a.tip = "This vendor does not sell it. " .. (step.where or "")
+    else
+      a.enabled = true
+      a.tip = "Buys what this step needs from the vendor you are talking to."
+      a.fn = function() J.BuyFromMerchant(want, true) end
+    end
+  elseif step.kind == "craft" then
+    a.text = "Make"
+    local can = P.Knows(step.spell) and P.CanMake(step.spell) or 0
+    if not P.Knows(step.spell) then
+      a.tip = "You have not learned this recipe."
+    elseif can <= 0 then
+      a.tip = "The materials are not all in your bags yet."
+    else
+      local casts = min(can, max(1, ns.Round(step.casts or 1)))
+      a.enabled = true
+      a.tip = "Makes " .. casts .. " now. Your profession window must be open: the first press opens it."
+      a.fn = function() P.Craft(step.spell, casts) end
+    end
+  elseif step.kind == "sell" and step.item then
+    a.text = "Post"
+    local have = ItemCount(step.item)
+    local price, why = J.PostPrice(step.item)
+    if have <= 0 then
+      a.tip = "There is none in your bags yet."
+    elseif not price then
+      a.tip = "Not worth posting: " .. tostring(why) .. "."
+    elseif not M.ahOpen then
+      a.tip = "Go to an auction house. This then posts " .. have .. " at about " .. ns.Money(price) .. " each."
+    else
+      a.enabled = true
+      a.tip = "Posts the " .. have .. " in your bags at " .. ns.Money(price) .. " each, just under the cheapest listing."
+      a.fn = function() J.SellAuction(step.item) end
+    end
+  else
+    return nil
+  end
+  return a
 end
 
 -- Every pinned job with its needs and next step.

@@ -41,8 +41,30 @@ or brings:
 5. **Craft**, materials first.
 6. **Post at the auction house**, with what it brings after the auction house's cut.
 
-What you already hold is left out. For a planned item the step that is next is marked **Next**,
-and hovering the plan window shows the same list.
+What you already hold is left out. For a planned item the step that is next is marked **Next**.
+The plan window lists the same steps under each planned item.
+
+![The plan window with its steps](../media/plan.png)
+
+### A button on every step
+Each step has a small button that does it for you. It is grey until you are where the step can
+be done, and hovering it says where that is:
+
+| Button | Lights up | Does |
+|---|---|---|
+| **Buy** (auction) | at an auction house | buys one of the step's items for each press, at no more than the plan expected |
+| **Take** | at a mailbox | takes the auctions you won out of the mail, one letter at a time; other mail is left alone |
+| **Buy** (vendor) | at a vendor that sells it | buys what the step needs |
+| **Make** | with the materials in your bags | crafts it (the first press opens the profession window) |
+| **Post** | at an auction house, with the goods in your bags | posts them just under the cheapest listing |
+
+The same buttons are on the steps in the side panel of the graph, and on the cards of the graph
+itself. Taking things from the bank has no button; do that by hand.
+
+### Completed
+A step that is finished leaves the list and is counted under **+ Completed (n)** at the bottom.
+Click that line to unfold the finished steps, in grey; click again to fold them away. Something
+half done (20 of 40 bought) stays in the list with what is left.
 
 ## What you could lose
 Every profit has the auction house's cut already taken off the sale; the **Sale** line says how

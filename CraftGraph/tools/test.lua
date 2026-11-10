@@ -2979,8 +2979,53 @@ do
     "the last step is posting, with the auction house's cut taken off: " .. last.where)
   check(steps[1].cost and steps[1].cost > 0 and steps[1].where:find("auction house", 1, true)
     and steps[2].text:find("mailbox", 1, true), "buying says what it costs and that it comes by mail: " .. steps[2].text)
-  check(p.plan.text:find("1. ", 1, true) and p.plan.text:find("Post 10", 1, true) and p.plan.text:find("after the cut", 1, true)
+  local function lines()
+    local t = {}
+    for _, l in ipairs(p.stepLines) do if l.shown then t[#t + 1] = l.text.text end end
+    return table.concat(t, "\n")
+  end
+  local function lineOf(kind)
+    for _, l in ipairs(p.stepLines) do
+      if l.shown and l.entry and l.entry.step and l.entry.step.kind == kind then return l end
+    end
+  end
+  check(lines():find("1. ", 1, true) and lines():find("Post 10", 1, true) and lines():find("after the cut", 1, true)
     and p.planHeader.text == "Steps, cheapest way", "the panel lists them, numbered")
+  -- Each step has a button, grey until you are where it can be done.
+  local oldAh, oldPlace = M.ahOpen, J.place
+  M.ahOpen, J.place = false, nil
+  ns.UI.Refresh() RunTimers()
+  local buy, take, post = lineOf("ah").button, lineOf("mail").button, lineOf("sell").button
+  check(buy.shown and buy.text == "Buy" and buy.enabled == false and buy.tip:find("Go to an auction house", 1, true),
+    "away from the auction house the Buy button is grey and says where to go: " .. tostring(buy.tip))
+  check(take.text == "Take" and take.enabled == false and post.text == "Post" and post.enabled == false,
+    "so are Take and Post")
+  local boughtItem, boughtQty
+  local oldBuy = J.BuyAuction
+  J.BuyAuction = function(item, qty) boughtItem, boughtQty = item, qty end
+  M.ahOpen = true
+  ns.UI.Refresh() RunTimers()
+  buy = lineOf("ah").button
+  check(buy.enabled == true and buy.fn ~= nil, "at the auction house the Buy button lights up")
+  buy.scripts.OnClick(buy)
+  check(boughtItem and boughtQty and boughtQty > 0 and lineOf("ah").entry.step.items[boughtItem] ~= nil,
+    "pressing it buys an item the step names (" .. tostring(boughtItem) .. " x" .. tostring(boughtQty) .. ")")
+  J.BuyAuction = oldBuy
+  M.ahOpen = false
+  -- The mailbox: only letters that are a won auction are taken.
+  local taken = {}
+  GetInboxNumItems = function() return 3 end
+  GetInboxInvoiceInfo = function(i) return (i == 2 and not taken[2]) and "buyer" or (i == 3 and "seller" or nil) end
+  AutoLootMailItem = function(i) taken[i] = true end
+  J.place = "mail"
+  ns.UI.Refresh() RunTimers()
+  take = lineOf("mail").button
+  check(take.enabled == true, "at a mailbox the Take button lights up")
+  take.scripts.OnClick(take)
+  RunTimers()
+  check(taken[2] == true and taken[1] == nil and taken[3] == nil, "it takes the won auction and leaves the other mail")
+  J.place = nil
+  ns.UI.Refresh() RunTimers()
   -- The cut is spelled out, and the bad case.
   local e = O.Evaluate(2841, 10)
   check(p.rows.sale.text:find("5% cut", 1, true) and math.abs(e.revenue - 200 * 10 * 0.95) < 0.01, "the sale line names the cut: " .. p.rows.sale.text)
@@ -2995,7 +3040,7 @@ do
   -- Planned: the amount changes the plan, and the next step is marked.
   check(J.Pin(2841, 10), "planned")
   ns.Open(2841) RunTimers()
-  check(p.planHeader.text == "Your plan, step by step" and p.plan.text:find("Next: ", 1, true), "a planned item marks the step that is next")
+  check(p.planHeader.text == "Your plan, step by step" and lines():find("Next: ", 1, true), "a planned item marks the step that is next")
   p.SetAmount(4) RunTimers()
   local _, pin = J.IsPinned(2841)
   check(pin.qty == 4 and ns.settings.qty == 4, "changing the amount of a planned item changes the plan")
@@ -3005,6 +3050,30 @@ do
   kinds = {}
   for i, st in ipairs(p.steps) do kinds[i] = st.kind end
   check(table.concat(kinds, " ") == "craft sell", "holding the materials leaves only craft and post (" .. table.concat(kinds, " ") .. ")")
+  -- What is finished folds away under "Completed", in the panel and the plan window.
+  local job
+  for _, j in ipairs(J.All()) do if j.pin.id == 2841 then job = j end end
+  local done = J.StepsDone(job)
+  local doneKinds = {}
+  for i, st in ipairs(done) do doneKinds[i] = st.kind end
+  check(table.concat(doneKinds, " ") == "ah mail craft", "buying, the mailbox and the smelting no longer needed count as finished (" .. table.concat(doneKinds, " ") .. ")")
+  check(lines():find("+ Completed (3)", 1, true) and not lines():find("done: ", 1, true), "they are folded away under Completed: " .. lines())
+  local fold
+  for _, l in ipairs(p.stepLines) do if l.shown and l.entry and l.entry.fold then fold = l end end
+  fold.scripts.OnClick(fold)
+  ns.UI.Refresh() RunTimers()
+  check(pin.showDone == true and lines():find("- Completed (3)", 1, true) and lines():find("done: Buy at auction", 1, true),
+    "a click unfolds them, in grey: " .. lines())
+  pin.showDone = nil
+  local make = lineOf("craft").button
+  check(make.text == "Make" and make.tip ~= nil, "the craft step has a Make button")
+  ns.UI.UpdateHUD()
+  local hudText = {}
+  for i = 1, CraftGraphHUD.usedLines do hudText[#hudText + 1] = CraftGraphHUD.lines[i].text.text end
+  hudText = table.concat(hudText, "\n")
+  check(hudText:find("Craft ", 1, true) and hudText:find("Post 4", 1, true) and hudText:find("Completed (3)", 1, true)
+    and CraftGraphHUD.lines[1].button.shown, "the plan window lists the same steps with their buttons")
+  M.ahOpen, J.place = oldAh, oldPlace
   -- Where a vendor is.
   local where, seen = M.VendorWhere(999001)
   check(not seen and where:find("trade goods vendor", 1, true), "an item never seen at a vendor gets a general pointer")

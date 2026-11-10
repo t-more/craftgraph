@@ -507,10 +507,56 @@ M.SHARE_FORMAT, M.SHARE_VERSION = "craftgraph-prices", 1
 local SHARE_LEVELS = 8                 -- price levels sent per item
 local SHARE_MAX_AGE = 7 * 86400        -- older prices are not taken in
 
+-- Shared prices are kept apart for each player they came from:
+--   ns.realm.sharedBy[name] = { items = { [id] = { t, l, n } }, made, got, github }
+-- "Shared" switches them all; ns.settings.sharedOff[name] switches one off.
+function M.Contributors()
+  local out = {}
+  for name, c in pairs(ns.realm and ns.realm.sharedBy or {}) do
+    local n = 0
+    for _ in pairs(c.items or {}) do n = n + 1 end
+    out[#out + 1] = { name = name, items = n, made = c.made, got = c.got, github = c.github,
+      on = not (ns.settings.sharedOff and ns.settings.sharedOff[name]) }
+  end
+  table.sort(out, function(a, b) return a.name < b.name end)
+  return out
+end
+
+function M.SetContributor(name, on)
+  ns.settings.sharedOff = ns.settings.sharedOff or {}
+  ns.settings.sharedOff[name] = (not on) or nil
+  ns.generation = ns.generation + 1
+  ns.Fire("SOURCES")
+  ns.Fire("MARKET_UPDATED")
+end
+
+-- The newest shared price of an item among the players switched on, and
+-- who it came from.
 function M.Shared(id)
-  local sh = ns.realm and ns.realm.shared
-  if not sh or not sh.items or not M.Source("Shared") then return nil end
-  return sh.items[id], sh
+  local by = ns.realm and ns.realm.sharedBy
+  if not by or not M.Source("Shared") then return nil end
+  local off = ns.settings.sharedOff
+  local best, who
+  for name, c in pairs(by) do
+    if not (off and off[name]) then
+      local item = c.items and c.items[id]
+      if item and (not best or item.t > best.t) then best, who = item, name end
+    end
+  end
+  return best, who
+end
+
+-- Every item some switched-on player has shared a price for.
+function M.SharedIds()
+  local ids = {}
+  if not M.Source("Shared") then return ids end
+  local off = ns.settings.sharedOff
+  for name, c in pairs(ns.realm and ns.realm.sharedBy or {}) do
+    if not (off and off[name]) then
+      for id in pairs(c.items or {}) do ids[id] = true end
+    end
+  end
+  return ids
 end
 
 local function Quote(text)
@@ -640,7 +686,11 @@ function M.Import(text, force)
       .. "), not yours (" .. tostring(ns.realmKey) .. "). Press Import again to take them anyway." }
   end
   local now = time()
-  local shared = ns.realm.shared or { items = {} }
+  -- Each player's prices are kept under their in-game name.
+  local who = tostring(data.from or "someone")
+  if who == "" then who = "someone" end
+  ns.realm.sharedBy = ns.realm.sharedBy or {}
+  local shared = ns.realm.sharedBy[who] or { items = {} }
   shared.items = shared.items or {}
   local taken, older, tooOld, bad = 0, 0, 0, 0
   for key, entry in pairs(data.items) do
@@ -669,10 +719,10 @@ function M.Import(text, force)
     end
   end
   if taken > 0 then
-    shared.from = tostring(data.from or "someone")
     shared.made = type(data.made) == "number" and data.made or now
     shared.got = now
-    ns.realm.shared = shared
+    shared.github = type(data.github) == "string" and data.github or shared.github
+    ns.realm.sharedBy[who] = shared
     ns.generation = ns.generation + 1
     ns.Fire("SOURCES")
     ns.Fire("MARKET_UPDATED")
@@ -683,7 +733,7 @@ function M.Import(text, force)
   if bad > 0 then parts[#parts + 1] = bad .. " unreadable" end
   local rest = #parts > 0 and (" Left out: " .. table.concat(parts, ", ") .. ".") or ""
   local newer = type(data.version) == "number" and data.version > M.SHARE_VERSION
-  local result = { ok = taken > 0, taken = taken, older = older, tooOld = tooOld, bad = bad, from = data.from }
+  local result = { ok = taken > 0, taken = taken, older = older, tooOld = tooOld, bad = bad, from = who }
   if taken > 0 then
     result.text = "Imported " .. taken .. " prices from " .. tostring(data.from or "someone") .. ", scanned "
       .. ns.Age(now - (type(data.made) == "number" and data.made or now)) .. "." .. rest
@@ -695,9 +745,11 @@ function M.Import(text, force)
   return result
 end
 
--- Forgets everything that was shared.
-function M.ClearShared()
-  if ns.realm then ns.realm.shared = nil end
+-- Forgets everything that was shared, or what one player shared.
+function M.ClearShared(name)
+  if ns.realm then
+    if name and ns.realm.sharedBy then ns.realm.sharedBy[name] = nil else ns.realm.sharedBy = nil end
+  end
   ns.generation = ns.generation + 1
   ns.Fire("SOURCES")
   ns.Fire("MARKET_UPDATED")
@@ -705,15 +757,26 @@ end
 
 -- A .cg.json file put into Data/Shared.lua from outside the game is taken
 -- in once at login, and the outcome is said in chat and kept for the window.
+-- ns.SharedFile is one file's text, or a list of them (one per player).
 ns.Listen("LOGIN", function()
-  local file = ns.SharedFile
-  if type(file) ~= "string" or not ns.realm then return end
-  local mark = #file .. ":" .. file:sub(1, 80)
-  if ns.realm.sharedFileSeen == mark then return end
-  ns.realm.sharedFileSeen = mark
-  local result = M.Import(file, false)
-  M.lastImport = result
-  ns.Print("shared prices file: " .. result.text:gsub(" Press Import again to take them anyway%.", ""))
+  local files = ns.SharedFile
+  if type(files) == "string" then files = { files } end
+  if type(files) ~= "table" or not ns.realm then return end
+  ns.realm.sharedFilesSeen = ns.realm.sharedFilesSeen or {}
+  local seen, fresh = {}, 0
+  for _, file in ipairs(files) do
+    if type(file) == "string" then
+      local mark = #file .. ":" .. file:sub(1, 120)
+      seen[mark] = true
+      if not ns.realm.sharedFilesSeen[mark] then
+        local result = M.Import(file, false)
+        M.lastImport = result
+        fresh = fresh + 1
+        ns.Print("shared prices: " .. (result.text:gsub(" Press Import again to take them anyway%.", "")))
+      end
+    end
+  end
+  ns.realm.sharedFilesSeen = seen
 end)
 
 ------------------------------------------------------------------------------
@@ -985,6 +1048,7 @@ function M.Info(id)
       blur = on.z, price = on.l[1], turnover = OnlineSold(id),
       shared = (M.Shared(id) == on) or nil,
     }
+    if info.shared then info.sharedBy = select(2, M.Shared(id)) end
     info.soldKnown = info.turnover ~= nil
     if info.turnover == nil and it and (it.vn or 0) >= 0.4 then info.turnover = it.v end
     if not info.price and on.h then

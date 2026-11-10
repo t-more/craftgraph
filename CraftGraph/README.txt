@@ -106,6 +106,12 @@ Sharing prices with other players
   login how many prices it took in. Shared prices are used only where they
   are newer than your own scan, and can be switched off in Data sources.
 
+  Optional: a shared repository on GitHub where players pool their latest
+  prices, each under their character's name. sync/craftgraph_sync.py
+  data-pull fetches the others' (no account needed); data-sync also shares
+  yours (needs a GitHub account the repository's owner has let in). Each
+  player then shows under Data sources with a switch of their own.
+
 Data sources
   Your own scans always count. Three second opinions can be switched off
   and on to see what each one changes: Blizzard's hourly data (optional

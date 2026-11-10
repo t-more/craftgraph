@@ -18,7 +18,11 @@ that makes no sense is grey, and hovering it says why.
 
 The lines between cards carry the amount and its value: for your plan's quantity on the
 "made from" side. Their colour says whether the step earns money: **gold** when making the next
-thing pays, **grey** around nothing, **red** towards a loss.
+thing pays, **grey** around nothing, **red** towards a loss. Where a step clearly earns, a faint
+light drifts along its line from the material towards the thing made of it (`/cg flow` switches
+the lights off).
+
+![Lights drifting where the money flows](../media/flow.gif)
 
 **Moving around:** click a card to centre it, drag to pan, mouse wheel to zoom. The mouse's back
 and forward buttons go back and forward.

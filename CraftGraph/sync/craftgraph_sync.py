@@ -879,10 +879,9 @@ def cmd_remove_watch(args):
 SHARE_FORMAT = "craftgraph-prices"
 
 
-def cmd_share_export(args):
-    """Writes the prices of your scans from the last day to a .cg.json file
-    that another player can import. The same JSON the game's Export makes."""
-    saved = load_saved()
+def build_export(saved):
+    """The prices of the player's own scans from the last day, as the share
+    format: (document, realm). The realm with the most fresh prices wins."""
     best_realm, items = None, {}
     now = int(time.time())
     for realm, data in (saved.get("realms") or {}).items():
@@ -895,11 +894,26 @@ def cmd_share_export(args):
         if len(found) > len(items):
             best_realm, items = realm, found
     if not items:
+        return None, None
+    # The character: the one this realm's saved data knows best.
+    name, most = "someone", -1
+    for key, char in (saved.get("chars") or {}).items():
+        known = len(char.get("known") or {}) if isinstance(char, dict) else 0
+        if known > most:
+            name, most = str(key).split(" - ")[0], known
+    made = max(entry["t"] for entry in items.values())
+    return {"format": SHARE_FORMAT, "version": 1, "realm": best_realm, "from": name, "made": made, "items": items}, best_realm
+
+
+def cmd_share_export(args):
+    """Writes the prices of your scans from the last day to a .cg.json file
+    that another player can import. The same JSON the game's Export makes."""
+    document, realm = build_export(load_saved())
+    if not document:
         sys.exit("No scan of your own in the last day to export. Do a full scan, then log out or /reload.")
     target = Path(args.file) if args.file else Path.cwd() / ("CraftGraph-%s.cg.json" % time.strftime("%Y%m%d-%H%M"))
-    target.write_text(json.dumps({"format": SHARE_FORMAT, "version": 1, "realm": best_realm,
-                                  "from": "file", "made": now, "items": items}, separators=(",", ":")))
-    print("Exported %d prices for \"%s\" to %s" % (len(items), best_realm, target))
+    target.write_text(json.dumps(document, separators=(",", ":")))
+    print("Exported %d prices for \"%s\" to %s" % (len(document["items"]), realm, target))
 
 
 def cmd_share_import(args):
@@ -922,6 +936,151 @@ def cmd_share_import(args):
         "ns.SharedFile = [%s[%s]%s]\n" % ("=" * level, text, "=" * level), encoding="utf-8")
     print("Ready: %d prices for \"%s\" from %s." % (len(data["items"]), data.get("realm"), data.get("from")))
     print("Log in (or /reload) and the game says in chat how many it took in.")
+
+
+# ----------------------------------------------------------------------------
+# The shared data repository on GitHub (optional)
+#
+# Players who want to can put the prices of their latest scans in one public
+# repository, each in a file of their own named after their GitHub account
+# and tagged with their character's name. Everyone can read it without an
+# account; writing needs a GitHub account that the repository's owner has
+# let in. The addon then lists each player as a data source of their own.
+# ----------------------------------------------------------------------------
+DATA_REPOSITORY = "t-more/craftgraph-data"
+
+
+def slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-") or "realm"
+
+
+def github_token():
+    for name in ("CRAFTGRAPH_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
+        if os.environ.get(name):
+            return os.environ[name]
+    try:
+        import subprocess
+        out = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=10)
+        return out.stdout.strip() or None
+    except Exception:
+        return None
+
+
+def github(path, token=None, method="GET", body=None):
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = "Bearer " + token
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request("https://api.github.com" + path, data=data, headers=headers, method=method)
+    return json.loads(urllib.request.urlopen(request, timeout=30).read() or b"null")
+
+
+def cmd_data_publish(args):
+    """Puts your latest prices in the shared repository under your GitHub
+    account. Your character's name and your GitHub name become public."""
+    document, realm = build_export(load_saved())
+    if not document:
+        sys.exit("No scan of your own in the last day to share. Do a full scan, then log out or /reload.")
+    token = github_token()
+    if not token:
+        sys.exit("To share you need a GitHub account on this computer: install the GitHub CLI and run "
+                 "'gh auth login', or set GITHUB_TOKEN. Reading what others share needs none.")
+    try:
+        login = github("/user", token)["login"]
+    except urllib.error.HTTPError as error:
+        sys.exit("GitHub did not accept the login (%s)." % error.code)
+    document["github"] = login
+    path = "/repos/%s/contents/data/%s/%s.cg.json" % (DATA_REPOSITORY, slug(realm), login)
+    sha = None
+    try:
+        sha = github(path, token)["sha"]
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+    text = json.dumps(document, separators=(",", ":"))
+    body = {"message": "Prices from %s (%s), %d items" % (document["from"], login, len(document["items"])),
+            "content": base64.b64encode(text.encode()).decode()}
+    if sha:
+        body["sha"] = sha
+    try:
+        github(path, token, "PUT", body)
+    except urllib.error.HTTPError as error:
+        if error.code in (403, 404):
+            sys.exit("You are not let in to the shared repository yet. Ask its owner to add your GitHub "
+                     "account (%s) at https://github.com/%s" % (login, DATA_REPOSITORY))
+        raise
+    print("Shared %d prices for \"%s\" as %s (GitHub: %s)." % (len(document["items"]), realm, document["from"], login))
+    return login
+
+
+def cmd_data_pull(args, own=None):
+    """Fetches what other players have shared for your auction house and
+    puts it where the game reads it at login. Needs no account."""
+    saved = load_saved()
+    _, realm = build_export(saved)
+    if not realm:
+        realms = list((saved.get("realms") or {}).keys())
+        realm = realms[0] if realms else None
+    if not realm:
+        sys.exit("The addon has no saved data yet, so the auction house is not known.")
+    token = github_token()
+    if own is None and token:
+        try:
+            own = github("/user", token)["login"]
+        except Exception:
+            own = None
+    try:
+        listing = github("/repos/%s/contents/data/%s" % (DATA_REPOSITORY, slug(realm)), token)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            listing = []
+        else:
+            raise
+    texts, lines = [], []
+    for entry in listing:
+        name = entry.get("name", "")
+        if not name.endswith(".cg.json") or name == "%s.cg.json" % own:
+            continue
+        request = urllib.request.Request(entry["download_url"], headers={"User-Agent": USER_AGENT})
+        text = urllib.request.urlopen(request, timeout=60).read().decode("utf-8")
+        try:
+            data = json.loads(text)
+        except ValueError:
+            continue
+        if data.get("format") != SHARE_FORMAT or data.get("realm") != realm:
+            continue
+        # The file name is the account that wrote it; that is who it is from.
+        data["github"] = name[:-len(".cg.json")]
+        texts.append(json.dumps(data, separators=(",", ":")))
+        lines.append("  %s (GitHub: %s): %d prices, scanned %s" % (
+            data.get("from"), data["github"], len(data.get("items") or {}),
+            time.strftime("%d %b %H:%M", time.localtime(data.get("made", 0)))))
+    chunks = []
+    for text in texts:
+        level = 0
+        while ("]" + "=" * level + "]") in text:
+            level += 1
+        chunks.append("  [%s[%s]%s]," % ("=" * level, text, "=" * level))
+    (ADDON_DIR / "Data" / "Shared.lua").write_text(
+        "-- Put here by sync/craftgraph_sync.py data-pull: what other players shared.\n"
+        "local _, ns = ...\n"
+        "ns.SharedFile = {\n%s\n}\n" % "\n".join(chunks), encoding="utf-8")
+    if lines:
+        print("Fetched prices from %d other players for \"%s\":" % (len(lines), realm))
+        print("\n".join(lines))
+        print("Log in (or /reload): the game lists each of them under Data sources.")
+    else:
+        print("Nobody else has shared prices for \"%s\" yet." % realm)
+
+
+def cmd_data_sync(args):
+    """Shares yours and fetches the others': the two together."""
+    own = None
+    if github_token():
+        own = cmd_data_publish(args)
+    else:
+        print("No GitHub account on this computer: only fetching what others share.")
+    cmd_data_pull(args, own)
 
 
 # ----------------------------------------------------------------------------
@@ -1046,7 +1205,8 @@ def main():
     parser.add_argument("command", nargs="?", default="run",
                         choices=["setup", "run", "archive", "houses", "status", "install-timer", "remove-timer",
                                  "install-watch", "remove-watch", "check-update",
-                                 "share-export", "share-import"])
+                                 "share-export", "share-import",
+                                 "data-publish", "data-pull", "data-sync"])
     parser.add_argument("file", nargs="?", help="for share-export and share-import: the .cg.json file")
     parser.add_argument("--fixture", help=argparse.SUPPRESS)      # read saved API answers (for tests)
     args = parser.parse_args()
@@ -1054,7 +1214,8 @@ def main():
      "install-timer": cmd_install_timer, "remove-timer": cmd_remove_timer,
      "install-watch": cmd_install_watch, "remove-watch": cmd_remove_watch,
      "check-update": cmd_check_update, "share-export": cmd_share_export,
-     "share-import": cmd_share_import}[args.command](args)
+     "share-import": cmd_share_import, "data-publish": cmd_data_publish,
+     "data-pull": cmd_data_pull, "data-sync": cmd_data_sync}[args.command](args)
 
 
 if __name__ == "__main__":

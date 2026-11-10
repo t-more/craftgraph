@@ -3413,16 +3413,15 @@ local SOURCES = {
       .. "tool. Used where it is newer than your own scan." },
   { key = "Shared", text = "Prices shared by another player",
     note = function()
-      local _, sh = ns.Market.Shared(0)
-      local held = ns.realm and ns.realm.shared
-      if not held or not held.items or not next(held.items) then return "none imported (/cg share)" end
-      local n = 0
-      for _ in pairs(held.items) do n = n + 1 end
-      return n .. " prices from " .. tostring(held.from) .. ", scanned " .. ns.Age(time() - (held.made or 0))
-        .. (sh and "" or " (switched off)")
+      local people = ns.Market.Contributors()
+      if #people == 0 then return "none imported (/cg share)" end
+      local total = 0
+      for _, c in ipairs(people) do total = total + c.items end
+      return total .. " prices from " .. #people .. (#people == 1 and " player" or " players") .. ", listed below"
     end,
-    tip = "Prices another player exported and you imported (/cg share). Used where they are newer than "
-      .. "your own scan, and never mixed into your own history." },
+    tip = "Prices other players exported and you imported (/cg share, a .cg.json file, or the shared "
+      .. "data repository). Used where they are newer than your own scan, and never mixed into your "
+      .. "own history. Each player below has a switch of their own." },
   { key = "Auctionator", text = "Auctionator's prices",
     note = function() return _G.Auctionator and "installed" or "not installed" end,
     tip = "Auctionator's last price for items you have not scanned here, and its older daily history." },
@@ -3445,12 +3444,32 @@ function UI.SourcesText()
   return "|cffff8c33Switched off: " .. table.concat(off, ", ") .. ".|r"
 end
 
+local PEOPLE_ROWS = 8
+
 local function UpdateSources()
   if not sourcesFrame then return end
   for _, row in ipairs(sourcesFrame.rows) do
     row.check:SetChecked(ns.Market.Source(row.def.key))
     row.note:SetText(GREY .. row.def.note() .. "|r")
   end
+  -- One line per player whose prices are held, each with its own switch.
+  local people = ns.Market.Contributors()
+  local shown = math.min(#people, PEOPLE_ROWS)
+  for i = 1, PEOPLE_ROWS do
+    local row, c = sourcesFrame.people[i], people[i]
+    row.name = c and c.name or nil
+    row.check:SetShown(c ~= nil)
+    row.label:SetShown(c ~= nil)
+    if c then
+      row.check:SetChecked(c.on)
+      row.check:SetEnabled(ns.Market.Source("Shared"))
+      row.label:SetText(c.name .. GREY .. "  " .. c.items .. " prices, scanned " .. ns.Age(time() - (c.made or 0))
+        .. (c.github and (", github: " .. c.github) or "") .. "|r")
+    end
+  end
+  sourcesFrame.morePeople:SetText(#people > PEOPLE_ROWS and (GREY .. "and " .. (#people - PEOPLE_ROWS) .. " more players|r") or "")
+  sourcesFrame.peopleTitle:SetShown(#people > 0)
+  sourcesFrame:SetHeight(sourcesFrame.baseHeight + (#people > 0 and (26 + shown * 20 + (#people > PEOPLE_ROWS and 16 or 0)) or 0))
   sourcesFrame.guess:SetChecked(ns.settings.showGuesses and true or false)
 end
 
@@ -3516,7 +3535,33 @@ function UI.ToggleSources()
     gnote:SetPoint("TOPLEFT", glabel, "BOTTOMLEFT", 0, -2)
     gnote:SetText("off: hidden where they would mislead")
     f.guess = guess
-    f:SetHeight(62 + (#SOURCES + 1) * 38 + 30)
+    f.baseHeight = 62 + (#SOURCES + 1) * 38 + 30
+    f:SetHeight(f.baseHeight)
+    f:SetWidth(400)
+    -- Players whose shared prices are held.
+    local py = -58 - (#SOURCES + 1) * 38 - 4
+    f.peopleTitle = Text(f, "GameFontNormalSmall")
+    f.peopleTitle:SetPoint("TOPLEFT", 14, py)
+    f.peopleTitle:SetText("Players sharing prices with you")
+    f.people = {}
+    for i = 1, PEOPLE_ROWS do
+      local y = py - 18 - (i - 1) * 20
+      local check = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+      check:SetSize(20, 20)
+      check:SetPoint("TOPLEFT", 12, y)
+      local label = Text(f, "GameFontHighlightSmall")
+      label:SetPoint("LEFT", check, "RIGHT", 2, 0)
+      label:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+      label:SetWordWrap(false)
+      local row = { check = check, label = label }
+      check:SetScript("OnClick", function(self)
+        if row.name then ns.Market.SetContributor(row.name, self:GetChecked() and true or false) end
+      end)
+      Tip(check, "One player's prices", "Untick to leave this player's prices out and see what changes.")
+      f.people[i] = row
+    end
+    f.morePeople = Text(f, "GameFontDisableSmall")
+    f.morePeople:SetPoint("TOPLEFT", 16, py - 18 - PEOPLE_ROWS * 20)
     local share = Button(f, "Share prices ...", 130)
     share:SetPoint("BOTTOMLEFT", 12, 10)
     share:SetScript("OnClick", function() ns.Safe(UI.ShowShare, "export") end)

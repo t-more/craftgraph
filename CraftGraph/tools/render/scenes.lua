@@ -56,6 +56,19 @@ for _, name in ipairs({ "Copper Bar", "Copper Ore", "Bronze Bar" }) do
   frame("graph", {}, 1.8)
 end
 
+-- Lights drifting along the lines that earn, towards the product.
+do
+  ns.UI.Focus(hero) settle()
+  local graphView = find(function(f) return f.canvas and f.flows end)
+  local area = wow.viewOf(graphView, 4)
+  for _ = 1, 30 do
+    wow.clock = wow.clock + 0.1
+    graphView.scripts.OnUpdate(graphView, 0.1)
+    frame("flow", { view = area, zoom = 1.4 }, 0.1)
+  end
+  tour("Gold lines earn, red ones lose; small lights drift the way the money flows", 4)
+end
+
 -- The price box: history with forecast, then the week and the day folded.
 local function boxView(captioned)
   local v = wow.viewOf(side.week, 8)

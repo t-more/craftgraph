@@ -1685,8 +1685,7 @@ function MarketRows()
   for id in pairs(ns.realm and ns.realm.items or {}) do items[id] = true end
   local _, online = M.Online(0)
   for id in pairs(online and online.items or {}) do items[id] = true end
-  local _, sharedData = M.Shared(0)
-  for id in pairs(sharedData and sharedData.items or {}) do items[id] = true end
+  for id in pairs(M.SharedIds()) do items[id] = true end
   for id in pairs(items) do
     local info = M.Info(id)
     local ladder = info and info.source == "scan" and info.ladder

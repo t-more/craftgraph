@@ -2100,6 +2100,35 @@ do
     end
   end
   check(reds > 0, "the graph draws its lines")
+  -- Lights drift along the lines that earn, towards the product.
+  do
+    local paying
+    for _, row in ipairs((ns.Deals.All())) do
+      if row.kind == "craft" and row.id ~= product and (V.EdgeLean({ from = row.id }) or 0) >= 0.3 then paying = row.id break end
+    end
+    if paying then
+      ns.Open(paying) RunTimers()
+      local gv
+      for _, fr in ipairs(frames) do if fr.lines and fr.canvas and fr.flows then gv = fr end end
+      check(gv and #gv.flows > 0 and gv.pulses[1] and gv.pulses[1].dot:IsShown(), "a paying step has a light on its line (" .. (gv and #gv.flows or 0) .. ")")
+      local x0 = gv.pulses[1].x
+      clock = clock + 0.4
+      gv.scripts.OnUpdate(gv, 0.4)
+      check(gv.pulses[1].x ~= x0, "the light moves with time")
+      local f = gv.flows[1]
+      clock = 0
+      f.offset = 0.1
+      V.Animate(gv)
+      local early = gv.pulses[1].x
+      f.offset = 0.6
+      V.Animate(gv)
+      check(gv.pulses[1].x < early, "it travels from the material towards the thing made of it")
+      SlashCmdList.CRAFTGRAPH("flow") RunTimers()
+      check(ns.settings.flowGlow == false and #gv.flows == 0 and not gv.pulses[1].dot:IsShown(), "/cg flow switches the lights off")
+      SlashCmdList.CRAFTGRAPH("flow") RunTimers()
+      check(ns.settings.flowGlow == true and #gv.flows > 0, "and on again")
+    end
+  end
   if was and was.ladder then
     local raw = {}
     for i = 1, #was.ladder, 2 do raw[#raw + 1] = { was.ladder[i], was.ladder[i + 1] } end
@@ -2229,7 +2258,7 @@ do
   local M = ns.Market
   local a, b, c = 2607, 2608, 2609
   for _, id in ipairs({ a, b, c }) do ns.realm.items[id] = nil end
-  ns.realm.shared = nil
+  ns.realm.sharedBy = nil
   M.Record(a, { { 50, 10 }, { 60, 5 } }, { full = true, t = now - 600 })
   M.Record(b, { { 200, 3 } }, { full = true, t = now - 600 })
   M.Record(c, { { 9, 1 } }, { full = true, t = now - 3 * 86400 })           -- too old to send
@@ -2290,19 +2319,45 @@ do
   check(f.result.text:find("Press Import again", 1, true) ~= nil, "another auction house: asked to confirm")
   M.ClearShared()
   ns.UI.ShareImport()
-  check(f.result.text:find("Imported", 1, true) ~= nil and ns.realm.shared ~= nil, "pressing Import again takes it: " .. f.result.text)
+  check(f.result.text:find("Imported", 1, true) ~= nil and ns.realm.sharedBy ~= nil, "pressing Import again takes it: " .. f.result.text)
   SlashCmdList.CRAFTGRAPH("import")
   check(f.box.text == "" and f.result.text:find("Last time", 1, true) ~= nil, "/cg import opens an empty box and recalls the last result")
 
   -- A file brought in from outside the game is imported once at login.
   M.ClearShared()
-  ns.realm.sharedFileSeen = nil
+  ns.realm.sharedFilesSeen = nil
   ns.SharedFile = text
   ns.Fire("LOGIN")
-  check(ns.realm.shared and M.lastImport and M.lastImport.taken == count, "a shared file is taken in at login")
+  check(ns.realm.sharedBy and M.lastImport and M.lastImport.taken == count, "a shared file is taken in at login")
   M.ClearShared()
   ns.Fire("LOGIN")
-  check(ns.realm.shared == nil, "and not a second time")
+  check(ns.realm.sharedBy == nil, "and not a second time")
+
+  -- Several players: each is a source of their own, by in-game name.
+  local function from(name, github, price, age)
+    return '{"format":"craftgraph-prices","version":1,"realm":"' .. ns.realmKey .. '","from":"' .. name .. '","github":"' .. github
+      .. '","made":' .. (now - age) .. ',"items":{"' .. b .. '":{"t":' .. (now - age) .. ',"n":4,"l":[' .. price .. ',4]}}}'
+  end
+  ns.realm.sharedFilesSeen = nil
+  ns.SharedFile = { from("Anwen", "anwen-gh", 210, 3600), from("Borin", "borin-gh", 190, 600) }
+  ns.Fire("LOGIN")
+  local people = M.Contributors()
+  check(#people == 2 and people[1].name == "Anwen" and people[2].name == "Borin" and people[2].github == "borin-gh",
+    "two players' files give two sources, by in-game name")
+  check(M.Info(b).price == 190 and M.Info(b).sharedBy == "Borin", "the newest of them is used and named: " .. tostring(M.Info(b).sharedBy))
+  M.SetContributor("Borin", false)
+  check(M.Info(b).price == 210 and M.Info(b).sharedBy == "Anwen", "switch one player off and the other's price shows")
+  ns.UI.ToggleSources()
+  local sf = ns.UI.sourcesFrame
+  check(sf.people[1].name == "Anwen" and sf.people[2].name == "Borin" and sf.people[2].check:GetChecked() == false
+    and sf.people[2].label.text:find("github: borin-gh", 1, true), "the data sources window lists each player with a switch")
+  sf.people[2].check:SetChecked(true)
+  sf.people[2].check.scripts.OnClick(sf.people[2].check)
+  check(M.Info(b).price == 190, "ticking the player there switches them on again")
+  ns.UI.ToggleSources()
+  M.ClearShared("Borin")
+  check(#M.Contributors() == 1, "one player's prices can be forgotten on their own")
+  M.ClearShared()
   ns.SharedFile = false
   f:Hide()
   for _, id in ipairs({ a, b, c }) do ns.realm.items[id] = nil end

@@ -417,6 +417,7 @@ function V.Create(parent)
   end)
   view:SetScript("OnHide", function(self) self.drag = nil end)
   view:SetScript("OnUpdate", function(self)
+    V.Animate(self)
     local d = self.drag
     if not d then return end
     if not IsMouseButtonDown("LeftButton") then
@@ -456,6 +457,7 @@ function V.SetGraph(view, graph, refit)
   local canvas = view.canvas
   local nNode, nLine, nLabel = 0, 0, 0
   view.empty:SetShown(graph == nil)
+  view.flows = {}
 
   if graph then
     -- Lines first (they sit under the item panels).
@@ -483,6 +485,12 @@ function V.SetGraph(view, graph, refit)
           r, g, bl = 1, 0.82, 0
         elseif e.cross then
           r, g, bl = 0.45, 0.62, 0.9
+        end
+        -- Where a step clearly earns, a small light drifts along its line
+        -- from the material towards the thing made of it.
+        if lean and lean >= 0.3 and ns.settings.flowGlow ~= false then
+          view.flows[#view.flows + 1] = { x1 = x1, y1 = y1, x2 = x2, y2 = y2, strength = lean,
+            offset = ((e.from * 7 + e.to * 13) % 100) / 100 }
         end
         local px, py = x1, y1
         for s = 1, SEGMENTS do
@@ -567,4 +575,46 @@ function V.SetGraph(view, graph, refit)
   end
   for i = nLine + 1, #view.lines do view.lines[i]:Hide() end
   for i = nLabel + 1, #view.labels do view.labels[i]:Hide() end
+  V.Animate(view)
+end
+
+-- Moves the lights along the lines that earn. Each takes a few seconds to
+-- cross, fading in at the material and out at the product; they are faint
+-- on purpose. Called every frame the graph is shown.
+local FLOW_SECONDS = 2.8
+function V.Animate(view)
+  local flows = view.flows or {}
+  view.pulses = view.pulses or {}
+  local now = GetTime()
+  for i, flow in ipairs(flows) do
+    local pulse = view.pulses[i]
+    if not pulse then
+      pulse = { dot = view.canvas:CreateTexture(nil, "BORDER", nil, 2), halo = view.canvas:CreateTexture(nil, "BORDER", nil, 1) }
+      pulse.dot:SetSize(4, 4)
+      pulse.halo:SetSize(12, 12)
+      if pulse.dot.SetBlendMode then
+        pulse.dot:SetBlendMode("ADD")
+        pulse.halo:SetBlendMode("ADD")
+      end
+      view.pulses[i] = pulse
+    end
+    local progress = (now / FLOW_SECONDS + flow.offset) % 1
+    -- The line runs from the product (start) to the material (end); the
+    -- light goes the other way, with the money.
+    local x, y = Bezier(flow.x1, flow.y1, flow.x2, flow.y2, 1 - progress)
+    local fade = math.sin(progress * math.pi)
+    pulse.dot:ClearAllPoints()
+    pulse.dot:SetPoint("CENTER", view.canvas, "CENTER", x, y)
+    pulse.dot:SetColorTexture(1, 0.92, 0.55, 0.75 * flow.strength * fade)
+    pulse.halo:ClearAllPoints()
+    pulse.halo:SetPoint("CENTER", view.canvas, "CENTER", x, y)
+    pulse.halo:SetColorTexture(1, 0.82, 0.2, 0.16 * flow.strength * fade)
+    pulse.dot:Show()
+    pulse.halo:Show()
+    pulse.x, pulse.y = x, y
+  end
+  for i = #flows + 1, #view.pulses do
+    view.pulses[i].dot:Hide()
+    view.pulses[i].halo:Hide()
+  end
 end

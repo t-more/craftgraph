@@ -42,3 +42,9 @@ when the version is bumped; see [README.md](README.md).
   pasted, saying what happened. Files ending in `.cg.json` can be brought in with "Import
   CraftGraph data" on Windows or the Python tool. Shared prices are a data source with its own
   switch.
+- Shared prices are kept per player and each player is a data source of their own, by character
+  name, with a switch in the Data sources window.
+- Optional: the Python tool can share your latest prices to a public GitHub repository and fetch
+  what others shared there (`data-publish`, `data-pull`, `data-sync`).
+- Graph: faint lights drift along the lines that clearly earn, from the material towards the
+  thing made of it. `/cg flow` switches them off.

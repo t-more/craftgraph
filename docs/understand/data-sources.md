@@ -47,6 +47,20 @@ The format is plain JSON, so anything can read or make it:
 `l` is the price ladder: price, units, price, units. Fields a version does not know are ignored,
 so the format can grow.
 
+## A shared repository on GitHub (optional)
+Players who want to can pool their prices in one public repository, each in a file of their own,
+tagged with their character's name and GitHub account. The addon then lists each player as a
+source of their own, by character name, with a switch.
+
+- **Reading** needs no account: `sync/craftgraph_sync.py data-pull` fetches what others shared for
+  your auction house; the game takes it in at your next login.
+- **Sharing** needs a GitHub account that the repository's owner has let in, and the GitHub CLI
+  logged in on your computer: `data-sync` shares yours and fetches the others'.
+- **What becomes public** when you share: your character's name, your GitHub name, and the prices
+  from your scans of the last day.
+
+Everything else stays on your computer. Without this the addon is unchanged.
+
 ## The optional Python tool
 The game cannot reach the internet or write a database, so those two jobs sit in a small tool,
 `sync/craftgraph_sync.py`, that runs outside the game:

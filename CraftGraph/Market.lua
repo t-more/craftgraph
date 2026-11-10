@@ -127,21 +127,87 @@ function M.Get(id)
   return ItemRecord(id, false)
 end
 
--- History is a flat array of 4 numbers per point: time, cheapest price,
--- robust price, units listed. A price of 0 means nothing was listed.
--- Nothing is ever dropped for being old. To keep the saved file loadable,
--- older points are thinned: everything for a week, then one point per six
--- hours up to a month, then one per day for good.
+-- History, kept inside the game's one saved file and built to stay small
+-- and quick however long it runs, the way a time-series database does it:
+--
+--   it.h    the recent points, every scan, as a flat array of 4 numbers
+--           per point: time, cheapest price, robust price, units listed.
+--           A price of 0 means nothing was listed.
+--   it.hp   everything older, packed into one string and thinned by age:
+--           one point an hour up to three weeks, one per six hours up to
+--           four months, one a day for good. Nothing is dropped for being
+--           old.
+--
+-- A packed point costs about 15 bytes in the saved file where four table
+-- entries cost about 80, and a string loads far faster than a table. A run
+-- of scans that all saw the same price is kept as its first and last point.
+local HOT_SECONDS = 2 * 86400        -- every scan is kept this long
+local HOURLY_SECONDS = 21 * 86400    -- then one an hour up to here
+local SIXHOUR_SECONDS = 120 * 86400  -- then one per six hours; daily after
+local COMPACT_EVERY = 40             -- tidy up after this many new points
+
+local function Pack(flat)
+  if not flat[1] then return nil end
+  local parts, last = {}, 0
+  for i = 1, #flat, 4 do
+    local t = floor(flat[i])
+    parts[#parts + 1] = (t - last) .. "," .. floor(flat[i + 1] + 0.5) .. ","
+      .. floor(flat[i + 2] + 0.5) .. "," .. floor(flat[i + 3] + 0.5)
+    last = t
+  end
+  return table.concat(parts, ";")
+end
+M.Pack = Pack
+
+local function Unpack(packed)
+  local flat, n, t = {}, 0, 0
+  if type(packed) ~= "string" then return flat end
+  for dt, price, robust, total in packed:gmatch("(%d+),(%d+),(%d+),(%d+)") do
+    t = t + tonumber(dt)
+    flat[n + 1], flat[n + 2], flat[n + 3], flat[n + 4] = t, tonumber(price), tonumber(robust), tonumber(total)
+    n = n + 4
+  end
+  return flat
+end
+M.Unpack = Unpack
+
+-- The packed part is unpacked once and remembered until it changes.
+local coldCache = setmetatable({}, { __mode = "k" })
+local function Cold(it)
+  if not it.hp then return nil end
+  local c = coldCache[it]
+  if not c or c.hp ~= it.hp then
+    c = { hp = it.hp, flat = Unpack(it.hp) }
+    coldCache[it] = c
+  end
+  return c.flat
+end
+
+-- The whole history of an item record, oldest first, as one flat array.
+-- Read it, do not change it.
+function M.History(it)
+  if not it then return {} end
+  local cold = Cold(it)
+  local h = it.h or {}
+  if not cold then return h end
+  local out, n = {}, #cold
+  for i = 1, n do out[i] = cold[i] end
+  for i = 1, #h do out[n + i] = h[i] end
+  return out
+end
+
 local function ThinHistory(h, now)
   local out, lastKey = {}, nil
   for i = 1, #h, 4 do
     local t = h[i]
     local age = now - t
     local key
-    if age > 30 * 86400 then
+    if age > SIXHOUR_SECONDS then
       key = "d" .. floor(t / 86400)
-    elseif age > 7 * 86400 then
+    elseif age > HOURLY_SECONDS then
       key = "q" .. floor(t / 21600)
+    elseif age > HOT_SECONDS then
+      key = "h" .. floor(t / 3600)
     end
     local n = #out
     if key and key == lastKey then
@@ -159,21 +225,45 @@ local function ThinHistory(h, now)
 end
 M.ThinHistory = ThinHistory
 
+-- Thins what has aged and moves it from the table into the packed string.
+local function Compact(it, now)
+  local all = ThinHistory(M.History(it), now)
+  local cold, hot = {}, {}
+  for i = 1, #all, 4 do
+    local to = (now - all[i] > HOT_SECONDS) and cold or hot
+    local n = #to
+    to[n + 1], to[n + 2], to[n + 3], to[n + 4] = all[i], all[i + 1], all[i + 2], all[i + 3]
+  end
+  it.hp = Pack(cold)
+  it.h = hot
+  it.hn = #hot
+end
+M.Compact = Compact
+
+local function Same(a, b, tolerance)
+  return math.abs(a - b) <= tolerance * max(a, b)
+end
+
 local function AppendHistory(it, t, price, robust, total)
   local h = it.h
   local n = #h
   -- "Still none listed" adds nothing new.
   if price == 0 and n >= 4 and h[n - 2] == 0 then return end
-  -- A new point replaces a very recent one, but "none listed" never
-  -- overwrites a real price (or the other way round).
   if n >= 4 and t - h[n - 3] < HISTORY_MERGE_SECONDS and (price > 0) == (h[n - 2] > 0) then
+    -- A new point replaces a very recent one, but "none listed" never
+    -- overwrites a real price (or the other way round).
     h[n - 3], h[n - 2], h[n - 1], h[n] = t, price, robust, total
+  elseif n >= 8 and price > 0 and h[n - 2] == price and h[n - 6] == price
+    and h[n - 1] == robust and h[n - 5] == robust
+    and Same(h[n], total, 0.05) and Same(h[n - 4], total, 0.05) then
+    -- The third scan in a row to see the same thing: the run keeps its
+    -- first point and its last, which moves on to now.
+    h[n - 3], h[n] = t, total
   else
     h[n + 1], h[n + 2], h[n + 3], h[n + 4] = t, price, robust, total
   end
-  if #h >= (it.hn or 0) + 4 * 60 then
-    it.h = ThinHistory(h, t)
-    it.hn = #it.h
+  if #h >= (it.hn or 0) + 4 * COMPACT_EVERY or (h[1] and t - h[1] > HOT_SECONDS + 86400) then
+    Compact(it, t)
   end
 end
 
@@ -403,7 +493,7 @@ function M.Info(id)
     if sold then info.turnover, info.soldKnown = sold, true end
     if not info.price then
       -- Nothing listed at the last scan; fall back to the last seen price.
-      local h = it.h
+      local h = M.History(it)
       for i = #h - 3, 1, -4 do
         if h[i + 1] > 0 then
           info.lastPrice, info.lastAge = h[i + 1], now - h[i]
@@ -426,7 +516,7 @@ function M.Series(id)
   local it = ItemRecord(id, false)
   local first
   if it then
-    local h = it.h
+    local h = M.History(it)
     for i = 1, #h, 4 do
       local price = h[i + 2] > 0 and h[i + 2] or h[i + 1]
       if price > 0 then

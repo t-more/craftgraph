@@ -658,6 +658,7 @@ local function AddProjection(proj)
   end
   GameTooltip:AddLine("Costs " .. ns.Money(proj.cost) .. " for " .. ns.Round(proj.units) .. ", at "
     .. ns.Money(proj.priceNow) .. " each now. The ranges hold about two times in three.", 0.6, 0.6, 0.6, true)
+  if proj.id then GameTooltip:AddLine("Prices: " .. UI.ScanAgeText(proj.id), 1, 1, 1) end
 end
 UI.AddProjection = AddProjection
 
@@ -1308,7 +1309,7 @@ local function CreateTrends(parent)
   f.facts:SetPoint("TOPLEFT", 14, -36)
   f.facts:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -36)
   f.facts:SetWordWrap(true)
-  f.facts:SetMaxLines(3)
+  f.facts:SetMaxLines(4)
   f.facts:SetSpacing(3)
   f.facts:SetJustifyV("TOP")
 
@@ -1317,7 +1318,7 @@ local function CreateTrends(parent)
   local function Option(group, key, text, x, width)
     local b = Button(f, text, width)
     b:SetHeight(19)
-    b:SetPoint("TOPLEFT", x, -88)
+    b:SetPoint("TOPLEFT", x, -102)
     b:SetScript("OnClick", function()
       if group == "period" then trendPeriod = key else trendMeasure = key end
       UI.UpdateTrends()
@@ -1331,12 +1332,12 @@ local function CreateTrends(parent)
   Option("measure", "price", "Price", 336, 70)
   Option("measure", "listed", "Amount listed", 410, 104)
   f.optionNote = Text(f, "GameFontDisableSmall", "RIGHT")
-  f.optionNote:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -92)
+  f.optionNote:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -106)
 
   -- The bar chart.
   local chartBox = CreateFrame("Frame", nil, f)
-  chartBox:SetPoint("TOPLEFT", 14, -114)
-  chartBox:SetPoint("TOPRIGHT", -14, -114)
+  chartBox:SetPoint("TOPLEFT", 14, -128)
+  chartBox:SetPoint("TOPRIGHT", -14, -128)
   chartBox:SetHeight(200)
   local cbg = chartBox:CreateTexture(nil, "BACKGROUND")
   cbg:SetAllPoints()
@@ -1359,8 +1360,8 @@ local function CreateTrends(parent)
     f.daySeps[i]:SetColorTexture(1, 1, 1, 0.12)
   end
   f.readout = Text(f, "GameFontHighlightSmall")
-  f.readout:SetPoint("TOPLEFT", 14, -318)
-  f.readout:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -318)
+  f.readout:SetPoint("TOPLEFT", 14, -332)
+  f.readout:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -332)
   f.readout:SetWordWrap(true)
   f.readout:SetMaxLines(2)
   f.readout:SetSpacing(2)
@@ -1373,25 +1374,25 @@ local function CreateTrends(parent)
   f.chartEmpty:SetPoint("CENTER")
   f.chartEmpty:SetWidth(520)
   f.chartNote = Text(f, "GameFontDisableSmall")
-  f.chartNote:SetPoint("TOPLEFT", 14, -350)
-  f.chartNote:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -350)
+  f.chartNote:SetPoint("TOPLEFT", 14, -364)
+  f.chartNote:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, -364)
   f.chartNote:SetWordWrap(false)
 
   -- Stack sizes (left) and sellers (right).
   f.stackTitle = Text(f, "GameFontNormal")
-  f.stackTitle:SetPoint("TOPLEFT", 14, -374)
+  f.stackTitle:SetPoint("TOPLEFT", 14, -388)
   f.stackTitle:SetText("Listed in stacks of")
   f.stackNote = Text(f, "GameFontDisableSmall")
-  f.stackNote:SetPoint("TOPLEFT", 14, -394)
+  f.stackNote:SetPoint("TOPLEFT", 14, -408)
   f.stackNote:SetWidth(340)
   f.stackNote:SetWordWrap(true)
   f.stackNote:SetJustifyV("TOP")
   f.stackRows = {}
   f.sellerTitle = Text(f, "GameFontNormal")
-  f.sellerTitle:SetPoint("TOPLEFT", 400, -374)
+  f.sellerTitle:SetPoint("TOPLEFT", 400, -388)
   f.sellerTitle:SetText("Sellers at the last scan")
   f.sellerNote = Text(f, "GameFontDisableSmall")
-  f.sellerNote:SetPoint("TOPLEFT", 400, -394)
+  f.sellerNote:SetPoint("TOPLEFT", 400, -408)
   f.sellerNote:SetWidth(380)
   f.sellerNote:SetWordWrap(true)
   f.sellerNote:SetJustifyV("TOP")
@@ -1401,7 +1402,7 @@ local function CreateTrends(parent)
     local row = list[i]
     if row then return row end
     row = {}
-    local y = -414 - (i - 1) * 20
+    local y = -428 - (i - 1) * 20
     row.label = Text(f, "GameFontHighlightSmall")
     row.label:SetPoint("TOPLEFT", x, y)
     row.label:SetWidth(labelWidth)
@@ -1711,7 +1712,7 @@ function UI.UpdateWeekStrip(f, id)
     f.scaleTop:SetText(ns.Money(hi))
     f.scaleBottom:SetText(ns.Money(lo))
     f.legend:SetText(GOLD .. "usual|r" .. (differs and "  |cff73bfffnext " .. (dayMode and "24 h" or "7 days") .. "|r" or "")
-      .. "  " .. GREY .. "dots: scans at today's level|r")
+      .. "  " .. GREY .. "dots: scans,|r " .. UI.ScanAgeText(id))
   else
     f.empty:SetText("No price recorded yet.")
     f.empty:Show()
@@ -1729,6 +1730,18 @@ function UI.UpdateWeekStrip(f, id)
   f.nowMark:SetPoint("BOTTOMLEFT", plot, "BOTTOMLEFT", nowSlot * slotW, 0)
   f.nowMark:SetSize(max(slotW, 1), H)
   MoveStripSelector(f, id)
+end
+
+-- How old the newest scan of an item is, in words; orange once it is old
+-- enough that the picture may have moved on.
+function UI.ScanAgeText(id)
+  local info = ns.Market.Info(id)
+  if not info or info.source ~= "scan" or not info.age then
+    return "|cffff8c33never scanned by you|r"
+  end
+  local text = "latest " .. ns.Age(info.age)
+  if info.age > 2 * 3600 then return "|cffff8c33" .. text .. "|r" end
+  return GREY .. text .. "|r"
 end
 
 -- "in 3 h", "in 2 days": how far ahead a moment is.
@@ -1847,7 +1860,13 @@ function UI.UpdateTrends()
   if not t then
     facts[#facts + 1] = "No price has been recorded for this yet. Scan it at the auction house."
   else
-    local line = "Now about " .. ns.Money(t.now)
+    -- What the last scan actually saw comes first; the estimates follow.
+    local info = ns.Market.Info(id)
+    if info and info.source == "scan" and info.age then
+      facts[#facts + 1] = (info.price and ("Cheapest listed " .. ns.Money(info.price) .. " (" .. (info.total or 0) .. " on sale)")
+        or "None on sale") .. ", " .. UI.ScanAgeText(id) .. "."
+    end
+    local line = "Estimate now about " .. ns.Money(t.now)
     if t.vsUsual then
       line = line .. ", " .. Percent(t.vsUsual) .. " of " .. ns.Money(t.usual) .. " (last 14 days)"
     end

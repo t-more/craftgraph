@@ -5,6 +5,15 @@ at the auction house right now, a crafting graph with buy, make and sell
 buttons, price history with forecasts, and a plan tracker. Open it in game
 with `/cg`. What it does for a player is in `CraftGraph/README.txt`.
 
+## Dependencies
+
+The addon needs nothing but the game. The rule for this project: what can be
+done in the game is done in the game, in plain Lua, including the statistics.
+Anything that needs a program outside the game is optional and must leave the
+addon complete without it. Python is used only for what the game cannot do
+(reach the internet, write a database) or for analysis too heavy to run in
+the game; `lua5.1` is needed only to run the offline checks.
+
 ## Working on it
 
     ./test.sh        offline checks with plain Lua 5.1

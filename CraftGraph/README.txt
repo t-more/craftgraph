@@ -37,6 +37,20 @@ First use
   3. Press "Opportunities".
   Prices get steadier with every scan; after one scan margins are wide.
 
+What needs what
+  Everything in the game works with nothing else installed: scanning and
+  auto scan, prices and their history, the price model (trend, hour and
+  weekday habits, forecasts), opportunities, plans and their projections.
+  Your price history is kept inside the game's saved file for good, packed
+  small: every scan for two days, hourly for three weeks, six-hourly for
+  four months, daily after that.
+  Installing Python 3 is optional and adds what the game itself cannot do:
+    - prices while you are away, from Blizzard's hourly auction data;
+    - a database (SQLite) with every scan in full, for your own analysis;
+    - room for heavier analysis later than is sensible to run in the game.
+  Both are described below. Without Python nothing is missing in the game;
+  the history is simply coarser once it is older than two days.
+
 Planning and timing
   "Opportunities" lists every way to make money now. Two more filters there:
   "This item" shows every option that involves the item in focus (relisting

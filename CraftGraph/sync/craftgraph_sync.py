@@ -686,6 +686,20 @@ def lua_array(table):
     return out
 
 
+def unpack_history(packed):
+    """The addon's packed older history ("dt,price,robust,qty;...", time as
+    seconds since the point before) as the same flat list as its table."""
+    flat, t = [], 0
+    if not isinstance(packed, str):
+        return flat
+    for point in packed.split(";"):
+        parts = point.split(",")
+        if len(parts) == 4:
+            t += int(parts[0])
+            flat += [t, int(parts[1]), int(parts[2]), int(parts[3])]
+    return flat
+
+
 def archive_saved(db, saved):
     """Copies the price points the addon has saved into the scan table.
     Only points newer than the newest one already stored for an item are
@@ -701,7 +715,7 @@ def archive_saved(db, saved):
             if not isinstance(rec, dict):
                 continue
             item = int(item)
-            h = lua_array(rec.get("h"))
+            h = unpack_history(rec.get("hp")) + lua_array(rec.get("h"))
             seen += len(h) // 4
             last = newest.get((realm, item), 0)
             # History is in time order: walk back from the end to the first new point.

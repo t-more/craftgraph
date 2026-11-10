@@ -1868,7 +1868,7 @@ end
 function J.Projection(id, qty, goal)
   local cut = ns.settings and ns.settings.cut or 0.05
   local kind = goal and goal.kind or "craft"
-  local out = { kind = kind, rows = {} }
+  local out = { kind = kind, rows = {}, id = id }
   local cost, units, priceNow
   if kind == "craft" then
     local e = O.Evaluate(id, qty)

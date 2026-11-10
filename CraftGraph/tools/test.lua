@@ -354,8 +354,48 @@ do
   for d = 0, 364 do if not days[d] then missing = missing + 1 end end
   check(missing == 0, "every one of 365 days still has a price point (" .. missing .. " missing)")
   check(series[1][1] <= now - 364 * 86400, "the oldest point is a year old")
-  local points = #M.Get(id).h / 4
-  check(points < 700, "history stays compact: " .. points .. " points for a year")
+  local rec = M.Get(id)
+  local points = #M.History(rec) / 4
+  check(points < 900, "history stays compact: " .. points .. " points for a year")
+  check(rec.hp and #rec.h / 4 <= 60, "only the last days stay unpacked: " .. #rec.h / 4 .. " points")
+  check(#rec.hp < 20 * points, "the packed part is small: " .. #rec.hp .. " bytes for " .. points .. " points")
+  local again = M.Unpack(M.Pack(M.History(rec)))
+  local same = #again == #M.History(rec)
+  for i = 1, #again do if again[i] ~= M.History(rec)[i] then same = false end end
+  check(same, "packing and unpacking gives back the same history")
+  -- Hourly detail survives three weeks: needed to learn hours of the day.
+  do
+    local hid = 2593
+    ns.realm.items[hid] = nil
+    for step = 30 * 24, 0, -1 do
+      M.Record(hid, { { 200 + (step % 24), 10 + step } }, { full = true, t = now - step * 3600 })
+    end
+    local hours = {}
+    for _, pt in ipairs(M.Series(hid)) do
+      local age = now - pt[1]
+      if age < 20 * 86400 then hours[math.floor(age / 3600)] = true end
+    end
+    local kept = 0
+    for _ in pairs(hours) do kept = kept + 1 end
+    check(kept >= 20 * 24 - 2, "twenty days of hourly scans keep every hour: " .. kept)
+    local total = #M.History(M.Get(hid)) / 4
+    check(total < 600, "older than three weeks is thinned to six-hourly: " .. total .. " points in all")
+  end
+  -- A price that does not move is kept as the ends of the run.
+  do
+    local sid = 2594
+    ns.realm.items[sid] = nil
+    for step = 40, 0, -1 do
+      M.Record(sid, { { 500, 100 } }, { full = true, t = now - step * 1800 })
+    end
+    local n = #M.History(M.Get(sid)) / 4
+    local series = M.Series(sid)
+    check(n == 2, "forty unchanged scans are kept as two points: " .. n)
+    check(series[1][1] == now - 40 * 1800 and series[#series][1] == now, "the run's first and last moments are exact")
+    M.Record(sid, { { 510, 100 } }, { full = true, t = now + 1800 })
+    check(#M.History(M.Get(sid)) / 4 == 3, "a change adds a point")
+    ns.realm.items[sid] = nil
+  end
   local recent = 0
   for _, pt in ipairs(series) do if now - pt[1] < 6 * 86400 then recent = recent + 1 end end
   check(recent >= 30, "the last week keeps every scan: " .. recent)

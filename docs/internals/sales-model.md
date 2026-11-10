@@ -28,6 +28,14 @@ Sales of auctions arrive at an unknown rate; the belief about it is a Gamma dist
 by every pair of scans (Gamma-Poisson), with evidence fading by half each week. Units follow
 from the average stack sold. The range shown is the middle four fifths.
 
+## Where the rate starts
+With nothing known of the market the belief starts at a tenth of a sale in a tenth of a day
+("about one a day", held very loosely). Once eight or more items have been watched, it starts
+from what this market does: the share of what is listed that sells in a day (the middle over
+the watched items), times what this item has listed, held like a quarter of a day of watching.
+So an item watched for one hour with no sale seen reads close to the market's habit, and one
+watched for days speaks for itself. `/cg priors` prints the share.
+
 ## One number everywhere
 `Market.Info(id).turnover` is the selling rate every part of the addon shows: cards, side panel,
 chart label, batch sizes. It is the online figure when that source is on and has watched a day;

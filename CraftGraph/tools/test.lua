@@ -2932,6 +2932,136 @@ do
 end
 
 ------------------------------------------------------------------------------
+-- Priors from the market: where an estimate starts before an item's own scans.
+do
+  local base = now - 6 * 86400
+  -- Twelve items, scanned every three hours for six days: each wanders about
+  -- 5% a day and is 6% dearer at 20:00 than at 08:00.
+  local seed = 11
+  local function rnd() seed = (seed * 1103515245 + 12345) % 2147483648 return seed / 2147483648 end
+  local function gauss() return math.sqrt(-2 * math.log(rnd() + 1e-12)) * math.cos(2 * math.pi * rnd()) end
+  local list = {}
+  for item = 1, 12 do
+    local level, series = math.log(1000 * item), {}
+    for step = 0, 6 * 8 do
+      local t = base + step * 10800
+      level = level + 0.05 * gauss() / math.sqrt(8)
+      local hour = tonumber(os.date("%H", t))
+      series[#series + 1] = { t, math.exp(level + 0.03 * math.cos((hour - 20) / 24 * 2 * math.pi)) }
+    end
+    list[item] = series
+  end
+  local prior = S.PriorFrom(list, now)
+  check(prior.items == 12 and prior.sigma0 > 0.04 and prior.sigma0 < 0.10,
+    "the market's daily wander is found from its items, between the truth (5%) and the fixed 12%: " .. string.format("%.3f", prior.sigma0))
+  local evening, morning = 0, 0
+  for k = 18, 22 do evening = math.max(evening, prior.hour[k]) end
+  for k = 6, 10 do morning = math.min(morning, prior.hour[k]) end
+  check(prior.hour and evening > 0.01 and morning < -0.01,
+    "and so is its hour of day: dearer in the evening, cheaper in the morning (" .. string.format("%+.3f %+.3f", evening, morning) .. ")")
+  local few = S.PriorFrom({ list[1], list[2], list[3] }, now)
+  check(few.sigma0 == S.SIGMA0 and few.hour == nil, "three items say nothing about a market: the fixed assumptions stand")
+  -- A new item with two days of scans starts from the market, not from the fixed number.
+  local short = {}
+  for i = 1, 17 do short[i] = list[5][#list[5] - 17 + i] end
+  local fixed, market = S.Fit(short, now, nil, false), S.Fit(short, now, nil, prior)
+  check(market.s2 < fixed.s2, "an item with little history takes its wander from the market: "
+    .. string.format("%.3f against %.3f", math.sqrt(market.s2), math.sqrt(fixed.s2)))
+  local long = S.Fit(list[5], now, nil, prior)
+  check(math.abs(math.sqrt(long.s2) - math.sqrt(S.Fit(list[5], now, nil, false).s2)) < 0.03,
+    "with six days of its own the item mostly speaks for itself")
+  check(math.abs(S.Phi(0) - 0.5) < 1e-6 and math.abs(S.Phi(1.96) - 0.975) < 0.001 and math.abs(S.Phi(-1) - 0.1587) < 0.001,
+    "the normal curve is right")
+  -- Sales: the market's share of what is listed is where a briefly watched item starts.
+  local saved = {}
+  for id, it in pairs(ns.realm.items) do saved[id] = { it.sb, it.sa, it.sc, it.ln } it.sb, it.sa, it.sc = nil, nil, nil end
+  ns.generation = ns.generation + 1
+  check(M.SalesPrior() == false, "with no item watched there is no market prior for sales")
+  local made = {}
+  for i = 1, 10 do
+    local id = 990000 + i
+    ns.realm.items[id] = { ln = 100, sb = 2, sa = 2 * 30 * (0.8 + 0.04 * i), sc = 2 * 3 * (0.8 + 0.04 * i), l = { 100, 100 }, lt = now }
+    made[#made + 1] = id
+  end
+  ns.generation = ns.generation + 1
+  local sp = M.SalesPrior()
+  check(sp and sp.items == 10 and math.abs(sp.share - 0.3) < 0.03 and math.abs(sp.stack - 10) < 0.01,
+    "ten watched items give the market's habit: about 30% of what is listed sells a day, in stacks of ten")
+  ns.realm.items[990099] = { ln = 200, sb = 0.05, sa = 0, sc = 0, l = { 100, 200 }, lt = now }
+  local brief = M.Sales(990099)
+  check(brief and brief.rate > 30 and brief.rate < 60 and math.abs(brief.prior - 60) < 6,
+    "an item watched for an hour with no sale seen starts from the market (60 a day) and is pulled down a little: " .. string.format("%.0f", brief.rate))
+  ns.realm.items[990098] = { ln = 200, sb = 6, sa = 0, sc = 0, l = { 100, 200 }, lt = now }
+  check(M.Sales(990098).rate < 4, "six days without a sale outweigh the market: " .. string.format("%.1f", M.Sales(990098).rate))
+  for _, id in ipairs(made) do ns.realm.items[id] = nil end
+  ns.realm.items[990099], ns.realm.items[990098] = nil, nil
+  for id, v in pairs(saved) do
+    local it = ns.realm.items[id]
+    if it then it.sb, it.sa, it.sc, it.ln = v[1], v[2], v[3], v[4] end
+  end
+  ns.generation = ns.generation + 1
+  local said = {}
+  local oldPrint = ns.Print
+  ns.Print = function(msg) said[#said + 1] = tostring(msg) end
+  SlashCmdList.CRAFTGRAPH("priors")
+  ns.Print = oldPrint
+  check(#said >= 2 and said[1]:find("priors", 1, true) and table.concat(said, " "):find("sales", 1, true), "/cg priors says what the estimates start from")
+end
+
+------------------------------------------------------------------------------
+-- The margin of making and selling over time, and where it is heading.
+do
+  local oldCut = ns.settings.cut
+  ns.settings.cut = 0.05
+  local function history(id, fn)
+    ns.realm.items[id] = nil
+    for step = 0, 40 do
+      local t = now - (40 - step) * 3 * 3600
+      M.Record(id, { { math.floor(fn(step) + 0.5), 100 } }, { full = true, t = t })
+    end
+    M.Get(id).k = "c"
+  end
+  -- Bronze bars climb 2% a scan step for five days; copper and tin bars hold still.
+  history(2841, function(step) return 200 * 1.02 ^ step end)
+  history(2840, function() return 60 end)
+  history(3576, function() return 30 end)
+  ns.generation = ns.generation + 1
+  local trend = O.MarginTrend(2841)
+  local last = trend.points[#trend.points]
+  check(trend and #trend.points >= 20 and math.abs(last[3] - last[2] - last[4]) < 0.01 and math.abs(last[3] - M.Info(2841).price * 0.95) < 1,
+    "the margin at each scan is the sale after the cut less the materials then")
+  check(trend.now > trend.points[1][2], "it has grown as the bars got dearer")
+  check(trend.word == "rising" and trend.sure >= 0.75 and trend.perDay > 0,
+    "and its direction is believed rising: " .. trend.word .. ", " .. string.format("%.0f%% sure, %+.0f a day", trend.sure * 100, trend.perDay))
+  -- The other way: materials climbing under a still product.
+  history(2841, function() return 200 end)
+  history(2840, function(step) return 60 * 1.02 ^ step end)
+  ns.generation = ns.generation + 1
+  trend = O.MarginTrend(2841)
+  check(trend.word == "falling" and trend.perDay < 0, "dearer materials under a still price: falling (" .. trend.word .. ")")
+  -- Nothing moving: no direction is claimed.
+  history(2840, function() return 60 end)
+  ns.generation = ns.generation + 1
+  trend = O.MarginTrend(2841)
+  check(trend.word == "no clear direction", "still prices claim no direction: " .. trend.word)
+  check(O.MarginTrend(2770) == nil, "something that is not made has no margin")
+  -- The tick box draws it on the chart.
+  history(2841, function(step) return 200 * 1.02 ^ step end)
+  ns.generation = ns.generation + 1
+  ns.settings.chartMargin = true
+  ns.Open(2841) RunTimers()
+  local p = ns.UI.sidePanel
+  local ch
+  for _, f in ipairs(frames) do if f.flowLabel and f.yTop and f.shown then ch = f end end
+  check(p.margin and p.margin.checked == true and ch and ch.marginLines > 5 and ch.marginLabel.text:find("margin +", 1, true)
+    and ch.marginLabel.text:find("rising", 1, true), "ticked, the chart draws the margin and says where it is heading: " .. tostring(ch and ch.marginLabel.text))
+  ns.settings.chartMargin = false
+  ns.UI.Refresh() RunTimers()
+  check(ch.marginLines == 0 and ch.marginLabel.text == "", "unticked, it is gone")
+  ns.settings.cut = oldCut
+end
+
+------------------------------------------------------------------------------
 -- The side panel: how many, the bad case, and the plan step by step.
 do
   local J = ns.Jobs

@@ -328,7 +328,7 @@ local function CreatePanel(parent)
   Tip(badHit, "If prices turn against you",
     "The profit above is the best estimate, with the auction house's cut already taken off the sale. "
     .. "This line is a bad case: the estimate less twice its margin. Things end worse than this about "
-    .. "one time in forty. Red means you could end with less money than you started with. Not counted: "
+    .. "one time in ten, measured on real scans (prices here jump more than a tidy curve allows). Red means you could end with less money than you started with. Not counted: "
     .. "the listing deposit, which you lose if an auction runs out unsold.")
 
   p.useBest = Button(p, "Set", 42)
@@ -410,7 +410,7 @@ local function CreatePanel(parent)
     "Tick what to draw: the certainty glow, a grid to read prices off, bars for how much the price moved "
     .. "from one period to the next, and the supply and demand lines.")
   local options = CreateFrame("Frame", nil, p, "BackdropTemplate")
-  options:SetSize(186, 12 + 5 * 22)
+  options:SetSize(186, 12 + 6 * 22)
   options:SetPoint("TOPRIGHT", p, "TOPRIGHT", -12, y - 18)
   options:SetFrameStrata("DIALOG")
   options:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -455,7 +455,12 @@ local function CreatePanel(parent)
     "Adds a green line to the price chart: how many sold a day, judged from the auctions that "
     .. "vanished between full scans and evened out over a stretch of time. Its scale is at the "
     .. "right edge in units a day. It needs two full scans within twelve hours to start.")
-  p.chartChecks = { p.grid, p.bars, p.certainty, p.flow, p.demand }
+  p.margin, p.marginLabel = Option("chartMargin", "Margin (profit each)", "Margin over time",
+    "Adds a pink line to the price chart: what making one and selling it would have left at each scan, "
+    .. "after the auction house's cut, with the materials at their prices of that moment. The faint line "
+    .. "at its foot is nothing: above it pays, below it loses. Under the chart: the margin now and where "
+    .. "it is heading, said only when that is at least three chances in four. Only for things you can make.")
+  p.chartChecks = { p.grid, p.bars, p.certainty, p.flow, p.demand, p.margin }
   y = y - 20
 
   chart = ns.Chart.Create(p)
@@ -762,7 +767,7 @@ local function UpdatePanel()
   else
     rows.profit:SetText(GREY .. "--|r")
   end
-  -- The bad case: two margins below the estimate (about one time in forty
+  -- The bad case: two margins below the estimate (roughly one time in ten
   -- it ends lower still). What you stand to lose is said as a loss.
   if e.profit then
     local bad = e.profit - 2 * (e.sd or 0)
@@ -841,6 +846,7 @@ local function UpdatePanel()
   else
     chart:Update(id, { band = ns.settings.certainty, craft = unitCraft, vendor = ns.VendorSell(id),
       days = ns.settings.chartDays, flow = ns.settings.chartFlow, demand = ns.settings.chartDemand,
+      margin = ns.settings.chartMargin and craftable and ns.Opt.MarginTrend(id) or nil,
       grid = ns.settings.chartGrid, bars = ns.settings.chartBars })
   end
   local planned = state.job and state.job.pin and state.job.pin.id == id

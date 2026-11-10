@@ -11,6 +11,7 @@ riser. The only voice is the addon's own, from espeak-ng, used once.
 Needs ffmpeg, rsvg-convert, espeak-ng, and Python with numpy, scipy, Pillow.
 """
 import math
+import os
 import random
 import subprocess
 import sys
@@ -265,17 +266,45 @@ def heartbeat():
     return (one + two) * 0.55
 
 
-def addon_voice(path, text, speed=150):
-    """The addon speaks for itself: flat, a little like a small speaker."""
+TTS_HOME = Path(os.environ.get("CRAFTGRAPH_TTS", Path.home() / ".local/share/craftgraph-tts"))
+# Who speaks: the narrator of every film preview, and the addon itself.
+VOICES = {
+    "narrator": dict(kokoro="am_onyx", speed=1.22, deep=0.91, espeak=("en-gb-x-rp", 135, 16)),
+    "addon": dict(kokoro="bf_emma", speed=1.1, deep=1.0, espeak=("en-gb-x-rp", 150, 42)),
+    "small": dict(kokoro="bf_emma", speed=1.7, deep=1.0, espeak=("en-gb-x-rp", 215, 42)),
+}
+
+
+def speak(path, text, who):
+    """One spoken line as samples. Uses Kokoro (a small neural voice, in its
+    own environment under ~/.local/share/craftgraph-tts) when it is there,
+    and espeak-ng when it is not."""
+    v = VOICES[who]
     raw = Path(str(path) + ".raw.wav")
-    run("espeak-ng", "-v", "en-gb-x-rp", "-s", speed, "-p", 42, "-w", raw, text)
-    run("ffmpeg", "-y", "-loglevel", "error", "-i", raw, "-af",
-        "highpass=f=260,lowpass=f=3400,acompressor=threshold=-18dB:ratio=4,volume=3.0,aresample=%d" % SR, "-ac", "1", path)
+    python, script = TTS_HOME / ".venv/bin/python", TTS_HOME / "say.py"
+    if python.exists() and script.exists():
+        run(python, script, v["kokoro"], v["speed"], raw, text)
+    else:
+        voice, speed, pitch = v["espeak"]
+        run("espeak-ng", "-v", voice, "-s", speed, "-p", pitch, "-w", raw, text)
+    if who == "narrator":
+        # Lower and bigger: played back a little slow, more chest, a hall.
+        chain = ("aresample=48000,asetrate=48000*%f,aresample=%d,bass=g=6:f=120,treble=g=2:f=5000,"
+                 "acompressor=threshold=-20dB:ratio=3:makeup=4,aecho=0.8:0.5:55|110:0.22|0.12" % (v["deep"], SR))
+    else:
+        # The addon: a small, polite speaker.
+        chain = "highpass=f=220,lowpass=f=5200,acompressor=threshold=-18dB:ratio=3:makeup=3,aresample=%d" % SR
+    run("ffmpeg", "-y", "-loglevel", "error", "-i", raw, "-af", chain, "-ac", "1", "-c:a", "pcm_s16le", path)
     with wave.open(str(path)) as f:
-        return np.frombuffer(f.readframes(f.getnframes()), dtype="<i2").astype(float) / 32768
+        x = np.frombuffer(f.readframes(f.getnframes()), dtype="<i2").astype(float) / 32768
+    # Trim the quiet at both ends, so that timing is by the words.
+    loud = np.nonzero(np.abs(x) > 0.02)[0]
+    if len(loud):
+        x = x[max(0, loud[0] - 400):loud[-1] + 2400]
+    return x / max(1e-6, np.abs(x).max())
 
 
-def compose(total, marks, voice_dir):
+def compose(total, marks, spoken):
     """The whole track, built on the same clock as the pictures."""
     n = int(SR * (total + 1.5))
     dry, wet = np.zeros(n), np.zeros(n)                # wet goes through the hall as well
@@ -331,9 +360,6 @@ def compose(total, marks, voice_dir):
         buf[cut:] = 0
         buf[cut - 300:cut] *= np.linspace(1, 0, 300)
 
-    # The joke, in silence: the addon itself.
-    said = addon_voice(voice_dir / "early.wav", "Too early to forecast.")
-    add(front, said / max(1e-6, np.abs(said).max()), m["silence"] + 0.75, 0.8)
     # "...mostly": two notes, falling.
     add(front, pluck(17, 1.0), m["mostly"] + 0.05)
     add(front, pluck(12, 1.0), m["mostly"] + 0.4)
@@ -360,8 +386,10 @@ def compose(total, marks, voice_dir):
     # The stinger: a till, and the small print at speed.
     add(wet, bell(1318.5, 1.2, 1.4), m["rated"])
     add(wet, bell(1975.5, 1.2, 1.0), m["rated"] + 0.07)
-    small = addon_voice(voice_dir / "small.wav", "Experimental. Deposits not included.", speed=215)
-    add(front, small / max(1e-6, np.abs(small).max()), m["rated"] + 0.45, 0.6)
+    # Everything that is said, where its shot begins.
+    voice = np.zeros(n)
+    for name, samples, offset, gain in spoken:
+        add(voice, samples, m[name] + offset, gain)
 
     # A hall: the wet part convolved with a decaying burst of noise.
     tail = np.random.default_rng(9).standard_normal(int(SR * 1.5)) * np.exp(-np.arange(int(SR * 1.5)) / (SR * 0.42))
@@ -380,7 +408,13 @@ def compose(total, marks, voice_dir):
     # press it gently against the ceiling, then put the voice in front.
     loud = max(np.percentile(np.abs(mono), 99.7), 1e-9)
     stereo = np.tanh(np.stack([left, right], axis=1) / loud * 0.9) * 0.9
-    stereo += front[:, None]
+    # The music steps back while someone speaks.
+    level = np.abs(voice)
+    hold = int(SR * 0.12)
+    level = np.maximum.reduceat(np.pad(level, (0, hold)), np.arange(0, len(level), hold)).repeat(hold)[:n]
+    level = lowpass(np.minimum(1, level * 4), 6, 1)
+    stereo *= (1 - 0.55 * np.clip(level, 0, 1))[:, None]
+    stereo += (front + voice * 0.85)[:, None]
     stereo = np.clip(stereo, -0.98, 0.98)
     end = int(total * SR)
     stereo = stereo[:end + int(SR * 0.8)]
@@ -421,7 +455,7 @@ def main():
     scenes = [
         ("world", 2.0, lambda k, t: black, [Slam(big("IN A WORLD", 170, tracking=0.16), mid, at=0.0)]),
         ("auctions", 1.5, lambda k, t: camera(lists, (100, 170, 1220, 686), (100, 420, 1220, 686), ease(k)),
-         [Slam(over("OF 190,000 AUCTIONS", 96), mid + 150, at=0.0, power=0.7)]),
+         [Slam(over("OF 200,000 AUCTIONS", 96), mid + 150, at=0.0, power=0.7)]),
         ("player", 1.0, lambda k, t: black, [Slam(big("ONE PLAYER", 170, tracking=0.12), mid, at=0.0)]),
         ("sheet", 1.5, lambda k, t: black, [Slam(big("HAD A SPREADSHEET", 140, "gold"), mid, at=0.0)]),
         ("notenough", 1.5, lambda k, t: black,
@@ -451,6 +485,35 @@ def main():
           Slam(text_layer("Experimental. Deposits not included. Not affiliated with or endorsed by Blizzard.", 26, GREY, 0.02, MEDIUM, glow=False),
                mid + 95, at=0.45, fade=True)]),
     ]
+    # What is said in each shot: (who, words, seconds into the shot, loudness).
+    lines = {
+        "world": ("narrator", "In a world.", 0.15, 1.0),
+        "auctions": ("narrator", "Of two hundred thousand auctions.", 0.1, 1.0),
+        "player": ("narrator", "One player.", 0.1, 1.0),
+        "sheet": ("narrator", "Had a spreadsheet.", 0.1, 1.0),
+        "notenough": ("narrator", "It was not enough.", 0.3, 0.8),
+        "winter": ("narrator", "This winter.", 0.1, 1.0),
+        "recipe": ("narrator", "It knows the recipe.", 0.1, 1.0),
+        "wave": ("narrator", "It rides the wave.", 0.1, 1.0),
+        "buttons": ("narrator", "It presses the buttons.", 0.1, 1.0),
+        "future": ("narrator", "It sees, the future!", 0.1, 1.0),
+        "silence": ("addon", "Too early to forecast.", 0.7, 0.9),
+        "mostly": ("narrator", "Mostly.", 0.15, 0.85),
+        "margin": ("narrator", "Based on a true margin.", 0.1, 1.0),
+        "profit": ("narrator", "Six silver, eleven copper. Give or take.", 0.1, 1.0),
+        "lose": ("addon", "Could lose thirty silver.", 0.15, 0.9),
+        "title": ("narrator", "Craft Graph.", 0.35, 1.0),
+        "rated": ("small", "Experimental. Deposits not included. Rated G, for gold.", 0.3, 0.75),
+    }
+    spoken = []
+    for i, (name, seconds, base, lands) in enumerate(scenes):
+        if name in lines:
+            who, words, offset, gain = lines[name]
+            samples = speak(work / ("say_" + name + ".wav"), words, who)
+            spoken.append((name, samples, offset, gain))
+            need = offset + len(samples) / SR + 0.05
+            if need > seconds:                         # whole beats, so the cuts stay on the pulse
+                scenes[i] = (name, math.ceil(need / BEAT) * BEAT, base, lands)
     marks, at = {}, 0.0
     for name, seconds, *_ in scenes:
         marks[name] = at
@@ -518,7 +581,7 @@ def main():
         sys.exit("the encoder failed")
 
     # Sound, on the same clock.
-    stereo = compose(total, marks, work)
+    stereo = compose(total, marks, spoken)
     sound = work / "sound.wav"
     with wave.open(str(sound), "w") as f:
         f.setnchannels(2)

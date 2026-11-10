@@ -3,6 +3,8 @@
 > $\color{red}{\textbf{EXPERIMENTAL}}$ &nbsp; A prototype. It has been tried in the game, but not for long.
 > Check what it proposes before you spend gold.
 
+![This is not financial advice. It is barely copper advice.](docs/media/not-financial-advice.png)
+
 **Make gold at the auction house in World of Warcraft Forever without doing the sums yourself.**
 Open it in game with `/cg`.
 

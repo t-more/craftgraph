@@ -275,6 +275,109 @@ function O.UnitCost(id)
 end
 
 -- The recipe the plan would use for one unit, or nil.
+-- The margin of making one and selling it, over time: at each scan of the
+-- product, its price after the auction house's cut less what its materials
+-- cost then (each at its latest price up to that moment; vendor goods at
+-- the vendor's price). Returns { points = { {t, margin, sale, cost}, ... },
+-- now, perDay (coins a day), slope (share a day), sure (0-1), word }, or
+-- nil when the item is not made or prices are missing.
+-- The direction is believed, not read off two points: the ratio of sale to
+-- cost goes through the same model as a price, which gives a trend and how
+-- sure it is. "rising" or "falling" is said only at three chances in four.
+O.MARGIN_SURE = 0.75
+O.MARGIN_MIN_SLOPE = 0.01        -- a share a day; less than this is not worth calling a direction
+O.MARGIN_PRIOR_SLOPE = 0.05      -- before any data: no trend, give or take 5% a day
+O.MARGIN_STEP = 0.5              -- days between the readings the direction is judged from
+local marginCache, marginGen = {}, -1
+function O.MarginTrend(id)
+  if marginGen ~= ns.generation then marginCache, marginGen = {}, ns.generation end
+  if marginCache[id] ~= nil then return marginCache[id] or nil end
+  marginCache[id] = false
+  local Mk, St = ns.Market, ns.Stats
+  local spell = O.byProduct[id] and O.BestRecipe(id)
+  local r = spell and ns.Data.recipes[spell]
+  if not r then return nil end
+  local product = Mk.Series(id)
+  if #product < 2 then return nil end
+  local cut = ns.settings and ns.settings.cut or 0.05
+  local mats = {}
+  -- Every moment anything changed: a price that stood still for days is
+  -- kept as two points, so the product's own scans are not enough.
+  local times, seen = {}, {}
+  local function note(t)
+    if t >= product[1][1] and not seen[t] then seen[t] = true times[#times + 1] = t end
+  end
+  for _, p in ipairs(product) do note(p[1]) end
+  for i = 1, #r[7], 2 do
+    local item, qty = r[7][i], r[7][i + 1]
+    local vendor = Mk.VendorBuy(item)
+    local series = Mk.Series(item)
+    if #series == 0 and not vendor then return nil end
+    for _, p in ipairs(series) do note(p[1]) end
+    mats[#mats + 1] = { qty = qty, vendor = vendor, series = series, at = 1 }
+  end
+  table.sort(times)
+  local points, at = {}, 1
+  for _, t in ipairs(times) do
+    while at < #product and product[at + 1][1] <= t do at = at + 1 end
+    local cost = 0
+    for _, m in ipairs(mats) do
+      local price
+      if #m.series > 0 then
+        while m.at < #m.series and m.series[m.at + 1][1] <= t do m.at = m.at + 1 end
+        price = m.series[m.at][2]
+      end
+      -- A vendor's price is a ceiling: nobody pays more at auction.
+      if m.vendor and (not price or m.vendor < price) then price = m.vendor end
+      cost = cost + price * m.qty
+    end
+    cost = cost / max(1, r[4])
+    local sale = product[at][2] * (1 - cut)
+    if cost > 0 and sale > 0 then points[#points + 1] = { t, sale - cost, sale, cost } end
+  end
+  if #points < 2 then return nil end
+  local out = { points = points, now = points[#points][2], word = "no clear direction", sure = 0.5, perDay = 0, slope = 0 }
+  -- The direction: is the ratio of sale to cost drifting, or only wandering?
+  -- Read it every half day. The drift is the average move a day; how far
+  -- that can be trusted depends on how much the moves differ from one
+  -- another (the wander) and on how many days there are. Before any data
+  -- the belief is "no trend, give or take 5% a day", and the wander is
+  -- taken to be the market's.
+  local span = (points[#points][1] - points[1][1]) / 86400
+  if span < 1 then
+    out.word = "too little history for a direction"
+  else
+    local step = O.MARGIN_STEP
+    local n = math.floor(span / step)
+    local readings, k = {}, 1
+    for i = 0, n do
+      local t = points[#points][1] - (n - i) * step * 86400
+      while k < #points and points[k + 1][1] <= t do k = k + 1 end
+      readings[#readings + 1] = math.log(points[k][3] / points[k][4])
+    end
+    local drift = (readings[#readings] - readings[1]) / (n * step)
+    local sum = 0
+    for i = 2, #readings do
+      local off = readings[i] - readings[i - 1] - drift * step
+      sum = sum + off * off / step
+    end
+    local prior = St.MarketPrior()
+    local wander0 = prior and prior.sigma0 or St.SIGMA0
+    local wander2 = (wander0 * wander0 * 2 + sum) / (2 + max(0, n - 1))
+    local data, before = (n * step) / wander2, 1 / (O.MARGIN_PRIOR_SLOPE * O.MARGIN_PRIOR_SLOPE)
+    local slope, sd = drift * data / (data + before), math.sqrt(1 / (data + before))
+    out.slope, out.slopeSd = slope, sd
+    out.sure = St.Phi(math.abs(slope) / sd)
+    -- A share a day of the ratio is that share of the sale price in coins.
+    out.perDay = slope * points[#points][3]
+    if out.sure >= O.MARGIN_SURE and math.abs(slope) >= O.MARGIN_MIN_SLOPE then
+      out.word = slope > 0 and "rising" or "falling"
+    end
+  end
+  marginCache[id] = out
+  return out
+end
+
 function O.BestRecipe(id)
   local recipes = O.byProduct[id]
   if not recipes then return nil end

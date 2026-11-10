@@ -78,3 +78,15 @@ tools/render/make_media.sh media-build ../docs/media-new
   Blizzard's art and are not committed.
 
 It doubles as a visual check: it found a graph that did not fit its view.
+
+## The trailer
+`tools/render/make_trailer.py <frames folder> <real-graph.svg> <out.mp4>` builds the parody
+trailer from the rendered frames: animation with Pillow, music synthesised with numpy. The
+voices use Kokoro (a small neural speech model) when it is installed in its own environment at
+`~/.local/share/craftgraph-tts` (a Python 3.12 venv with `kokoro-onnx` and `soundfile`, the two
+model files from the kokoro-onnx releases, and a `say.py` that writes one line to a WAV), and
+fall back to espeak-ng. None of this is needed for the addon.
+
+## Checking the priors
+`lua5.1 tools/backtest_priors.lua` (simulated market) or with the path of a saved file (real
+scans) compares fixed priors with the market's on held-out scans.

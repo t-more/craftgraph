@@ -136,6 +136,7 @@ local DEFAULTS = {
   chartSmooth = 0,    -- minutes the chart's lines are averaged over; 0 = chosen by the chart
   chartFlow = false,  -- draw supply (units listed) on the price chart
   chartDemand = false, -- draw demand (units sold a day) on the price chart
+  chartMargin = false, -- draw the margin of making and selling one on the price chart
   showGuesses = false, -- show forecasts and patterns even where they are only guesses
   srcShared = true,   -- use prices another player shared with you
   srcOnline = true,   -- use Blizzard's hourly data when the sync tool has brought it in
@@ -403,6 +404,36 @@ SlashCmdList["CRAFTGRAPH"] = function(msg)
     ns.Print(ns.settings.flowGlow and "lights drift along the graph's lines towards where money is made."
       or "the graph's lines are still.")
     if ns.UI and ns.UI.Refresh then ns.UI.Refresh() end
+    return
+  end
+  if msg == "priors" then
+    -- What the estimates start from, before an item's own scans weigh in.
+    local prior = ns.Stats.MarketPrior()
+    if not prior then
+      ns.Print("priors: the fixed assumptions (no market data yet).")
+    else
+      ns.Print(string.format("priors from this market: prices wander about %d%% a day (%s; the fixed assumption is %d%%).",
+        ns.Round(prior.sigma0 * 100), prior.items >= ns.Stats.PRIOR_MIN_ITEMS and ("from " .. prior.items .. " items")
+          or "too few items yet, so this is the fixed assumption", ns.Round(ns.Stats.SIGMA0 * 100)))
+      if prior.hour then
+        local hi, lo = 0, 0
+        for k = 0, 23 do
+          if prior.hour[k] > prior.hour[hi] then hi = k end
+          if prior.hour[k] < prior.hour[lo] then lo = k end
+        end
+        ns.Print(string.format("  hour of day: dearest around %d:00 (%+.1f%%), cheapest around %d:00 (%+.1f%%), from %d item-days.",
+          hi, prior.hour[hi] * 100, lo, prior.hour[lo] * 100, prior.hourDays))
+      else
+        ns.Print("  hour of day: not enough days scanned at several hours yet; items start from \"no effect\".")
+      end
+    end
+    local sales = ns.Market.SalesPrior()
+    if sales then
+      ns.Print(string.format("  sales: this market sells about %d%% of what is listed a day (from %d items), in stacks of about %d.",
+        ns.Round(sales.share * 100), sales.items, ns.Round(sales.stack)))
+    else
+      ns.Print("  sales: too few items watched yet; an item starts from \"about one a day\".")
+    end
     return
   end
   if msg == "guesses" then

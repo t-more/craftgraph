@@ -1172,6 +1172,32 @@ function M.SalesLog(id)
   return out
 end
 
+-- What this market sells in a day as a share of what is listed, from the
+-- items that have been watched: the starting point for an item watched
+-- only briefly. { share, stack, items, days } or false with too few items.
+M.SALES_PRIOR_MIN_ITEMS = 8
+M.SALES_PRIOR_DAYS = 0.25         -- the market's word counts like a quarter of a day of watching
+local salesPrior, salesPriorGen
+function M.SalesPrior()
+  if salesPriorGen == ns.generation and salesPrior ~= nil then return salesPrior end
+  local shares, units, events = {}, 0, 0
+  for _, it in pairs(ns.realm and ns.realm.items or {}) do
+    if type(it) == "table" and (it.sb or 0) >= 0.04 and (it.ln or 0) > 0 then
+      shares[#shares + 1] = (it.sa or 0) / it.sb / it.ln
+      units, events = units + (it.sa or 0), events + (it.sc or 0)
+    end
+  end
+  if #shares < M.SALES_PRIOR_MIN_ITEMS then
+    salesPrior = false
+  else
+    table.sort(shares)
+    salesPrior = { share = shares[floor((#shares + 1) / 2)], items = #shares, days = M.SALES_PRIOR_DAYS,
+      stack = events > 0.5 and max(1, units / events) or 1 }
+  end
+  salesPriorGen = ns.generation
+  return salesPrior
+end
+
 -- The selling rate believed from the vanished auctions: units a day, the
 -- range it is in with four chances in five, the days of watching behind it
 -- and the units judged sold in that time. nil until two full scans within
@@ -1183,8 +1209,17 @@ function M.Sales(id)
   -- so the belief is about auctions a day; units follow from the average
   -- stack that sold.
   local events = it.sc or 0
-  local stack = events > 0.01 and (it.sa or 0) / events or 1
-  local alpha, beta = SALES_PRIOR_UNITS + events, SALES_PRIOR_DAYS + it.sb
+  -- Where the belief starts: with too little known of this market, a tenth
+  -- of a sale in a tenth of a day; otherwise what this market does, which
+  -- is to sell a certain share of what is listed each day.
+  local prior = M.SalesPrior()
+  local stack = events > 0.01 and (it.sa or 0) / events or (prior and prior.stack or 1)
+  local alpha0, beta0 = SALES_PRIOR_UNITS, SALES_PRIOR_DAYS
+  if prior and (it.ln or 0) > 0 then
+    local perDay = min(5000, prior.share * it.ln / max(1, stack))        -- auctions a day
+    alpha0, beta0 = perDay * prior.days, prior.days
+  end
+  local alpha, beta = alpha0 + events, beta0 + it.sb
   -- Gamma quantiles by the Wilson-Hilferty cube: good from alpha of 1 up,
   -- rough below, where the range is wide anyway.
   local function Quantile(z)
@@ -1192,7 +1227,7 @@ function M.Sales(id)
     return max(0, alpha * c * c * c / beta) * stack
   end
   return { rate = alpha / beta * stack, lo = Quantile(-1.2816), hi = Quantile(1.2816), days = it.sb,
-    units = it.sa or 0, auctions = events, sellers = it.sq,
+    units = it.sa or 0, auctions = events, sellers = it.sq, prior = prior and alpha0 / beta0 * stack or nil,
     -- Most of what could sell went between scans: more surely sold unseen.
     floor = (it.sf or 0) > 0.3 }
 end

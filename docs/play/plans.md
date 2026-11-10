@@ -69,8 +69,8 @@ half done (20 of 40 bought) stays in the list with what is left.
 ## What you could lose
 Every profit has the auction house's cut already taken off the sale; the **Sale** line says how
 much that is. Below the profit, **If prices turn** shows a bad case: the estimate less twice its
-margin. In red it reads "could lose ..."; in green, "still +...". Things end worse than that
-about one time in forty. The plan window and the Opportunities list show the same line on hover,
+margin. In red it reads "could lose ..."; in green, "still +...". Measured on real scans, things
+end worse than that roughly one time in ten. The plan window and the Opportunities list show the same line on hover,
 and a margin in orange there means the bad case is a loss. Not counted: the listing deposit,
 which is lost when an auction runs out unsold, and the higher cut of a neutral auction house.
 

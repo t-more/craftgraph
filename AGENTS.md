@@ -46,6 +46,10 @@ the human judge the effort. Friends get it as a zip, so it must work from the zi
     says where that is; finished steps fold away. The same list in the plan window and the graph.
 16. **Profit is after the auction house's cut, and beside it what could be lost.** Name the cut
     in coins; show the bad case (estimate less twice its margin), red when it is a loss.
+17. **Priors come from the market where they can.** An estimate starts from what the realm's
+    other items do (daily wander, hour of day, share of stock sold) and the item's own scans
+    pull it away; fixed numbers are the fallback. A direction is named only at three chances in
+    four. Every prior is listed in `docs/internals/price-model.md` and printed by `/cg priors`.
 
 ## Legal footing
 - A prototype among friends, given as is; each user answers for their own use. `LEGAL.md` says
@@ -69,6 +73,7 @@ the human judge the effort. Friends get it as a zip, so it must work from the zi
 - New file or TOC change needs a game restart; otherwise `/cg reload`.
 - The in-game log (in the saved file) is the evidence of what really happened in game.
 - Pictures are drawn from the real interface code on simulated data (`tools/render/`), and say so.
+  The one real-data example shows prices only: no seller or character names.
 - Docs: `README.md` sells it in simple words; `docs/` goes deeper level by level.
 
 ## Versions and release notes

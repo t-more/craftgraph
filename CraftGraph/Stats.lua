@@ -86,8 +86,11 @@ end
 -- points: {epoch, price}; x: their logs. Returns the season table:
 --   h, hv, hn   effect, variance and days seen for each hour 0-23
 --   d, dv, dn   the same for each weekday 0-6
-local function FitSeason(points, x, now)
+local function FitSeason(points, x, now, prior)
   local n = #points
+  -- What the whole market does at each hour is where an item's own hour
+  -- effect starts from; its own scans pull it away as they add up.
+  local marketHour = prior and prior.hour or nil
   local today = date("*t", now)
   local season = {
     midnight = now - today.hour * 3600 - today.min * 60 - today.sec,
@@ -166,7 +169,7 @@ local function FitSeason(points, x, now)
     end
     local mean, meanW = 0, 0
     for k = 0, 23 do
-      h[k] = hs[k] / (hw[k] + S.HOUR_DOUBT)
+      h[k] = (hs[k] + S.HOUR_DOUBT * (marketHour and marketHour[k] or 0)) / (hw[k] + S.HOUR_DOUBT)
       mean, meanW = mean + h[k] * hw[k], meanW + hw[k]
     end
     if meanW > 0 then
@@ -271,15 +274,19 @@ end
 -- points: array of {time in seconds, price}, sorted by time.
 -- Times in the model are days relative to `now`.
 -- season: hour and weekday effects worked out earlier, to save the work.
-function S.Fit(points, now, season)
+-- prior: what the market as a whole says (S.MarketPrior), or false for the
+-- fixed assumptions above.
+function S.Fit(points, now, season, prior)
   local n = #points
   if n == 0 then return nil end
+  if prior == nil then prior = S.MarketPrior() end
+  prior = prior or nil
   local t, x = {}, {}
   for i = 1, n do
     t[i] = (points[i][1] - now) / 86400
     x[i] = log(points[i][2])
   end
-  season = season or FitSeason(points, x, now)
+  season = season or FitSeason(points, x, now, prior)
   -- What is left once the hour and weekday effects are taken out.
   local y = {}
   for i = 1, n do
@@ -301,7 +308,8 @@ function S.Fit(points, now, season)
     end
   end
   local span = t[n] - t[1]
-  local s2 = S.SIGMA0 * S.SIGMA0
+  local sigma0 = prior and prior.sigma0 or S.SIGMA0
+  local s2 = sigma0 * sigma0
   if #moves >= 3 then
     table.sort(moves)
     local mid = moves[floor((#moves + 1) / 2)] * 1.4826      -- middle value to sd
@@ -430,6 +438,131 @@ function S.Eval(model, day, level)
     mean, var = mean + e, var + v
   end
   return mean, sqrt(max(var, 0) + few)
+end
+
+------------------------------------------------------------------------------
+-- Priors from the market itself
+--
+-- Every estimate here starts from an assumption and lets the item's own
+-- scans pull it away. The fixed numbers at the top of this file are
+-- assumptions about auction houses in general. Once this realm has been
+-- scanned, the other items say more about a new item than those numbers
+-- do: how much prices here wander in a day, and what the hour of the day
+-- does to them. So the starting point is taken from the market, held more
+-- firmly the more items are behind it, and falls back to the fixed numbers
+-- when there are too few. tools/backtest_priors.lua measures the gain.
+------------------------------------------------------------------------------
+S.PRIOR_ITEMS = 8          -- the fixed assumption counts as if this many items backed it
+S.PRIOR_MIN_ITEMS = 8      -- fewer items than this say nothing about the market
+S.PRIOR_HOUR_DOUBT = 20    -- an hour's market effect counts as if this many item-days said "none"
+S.PRIOR_SAMPLE = 250       -- items looked at, at most
+S.PRIOR_MIN_HOURS = 200    -- item-days-at-an-hour needed before the market's hours count
+
+-- From a list of price series ({ {epoch, price}, ... } each).
+function S.PriorFrom(list, now)
+  local hs, hw = {}, {}
+  for k = 0, 23 do hs[k], hw[k] = 0, 0 end
+  local today = date("*t", now)
+  local midnight = now - today.hour * 3600 - today.min * 60 - today.sec
+  local function hourOf(epoch)
+    local off = epoch - midnight
+    return floor((off - floor(off / 86400) * 86400) / 3600), floor(off / 86400)
+  end
+  -- First the hours: each scan against the middle of its own day, for days
+  -- scanned at two or more hours, over every item.
+  for _, series in ipairs(list) do
+    if #series >= 4 then
+      local days = {}
+      for i = 1, #series do
+        local hour, day = hourOf(series[i][1])
+        local d = days[day]
+        if not d then d = { sum = 0, n = 0, hours = {}, distinct = 0 } days[day] = d end
+        local lp = log(series[i][2])
+        d.sum, d.n = d.sum + lp, d.n + 1
+        if not d.hours[hour] then d.hours[hour] = { 0, 0 } d.distinct = d.distinct + 1 end
+        d.hours[hour][1], d.hours[hour][2] = d.hours[hour][1] + lp, d.hours[hour][2] + 1
+      end
+      for _, d in pairs(days) do
+        if d.distinct >= 2 then
+          local mean = d.sum / d.n
+          for hour, v in pairs(d.hours) do
+            hs[hour] = hs[hour] + max(-0.3, min(0.3, v[1] / v[2] - mean))
+            hw[hour] = hw[hour] + 1
+          end
+        end
+      end
+    end
+  end
+  local prior = { sigma0 = S.SIGMA0, items = 0, hour = nil, hourDays = 0 }
+  local total = 0
+  for k = 0, 23 do total = total + hw[k] end
+  local hour = {}
+  for k = 0, 23 do hour[k] = 0 end
+  if total >= S.PRIOR_MIN_HOURS then
+    local mean, meanW = 0, 0
+    for k = 0, 23 do
+      hour[k] = hs[k] / (hw[k] + S.PRIOR_HOUR_DOUBT)
+      mean, meanW = mean + hour[k] * hw[k], meanW + hw[k]
+    end
+    mean = mean / meanW
+    for k = 0, 23 do hour[k] = hw[k] > 0 and (hour[k] - mean) or 0 end
+    prior.hour, prior.hourDays = hour, total
+  end
+  -- Then the daily wander, with the market's hour effect taken out first
+  -- (or the evening rise would be counted as wander): moves over a quarter
+  -- of a day to three days, scaled to one day, a single wild move counting
+  -- no more than 60%.
+  local scales = {}
+  for _, series in ipairs(list) do
+    local n = #series
+    if n >= 4 then
+      local y = {}
+      for i = 1, n do y[i] = log(series[i][2]) - hour[(hourOf(series[i][1]))] end
+      local sum, count, j = 0, 0, 1
+      for i = 1, n do
+        if j < i then j = i end
+        while j < n and series[j][1] - series[i][1] < 21600 do j = j + 1 end
+        local dt = (series[j][1] - series[i][1]) / 86400
+        if dt >= 0.25 and dt <= 3 then
+          local move = min(0.6, abs(y[j] - y[i]) / sqrt(dt))
+          sum, count = sum + move * move, count + 1
+        end
+      end
+      if count >= 3 then scales[#scales + 1] = sqrt(sum / count) end
+    end
+  end
+  prior.items = #scales
+  if #scales >= S.PRIOR_MIN_ITEMS then
+    table.sort(scales)
+    local mid = scales[floor((#scales + 1) / 2)]
+    local k = #scales
+    prior.sigma0 = sqrt((S.SIGMA0 * S.SIGMA0 * S.PRIOR_ITEMS + mid * mid * k) / (S.PRIOR_ITEMS + k))
+    prior.sigma0 = max(0.03, min(0.4, prior.sigma0))
+    prior.seen = mid
+  end
+  return prior
+end
+
+-- For this realm, from a sample of its items. Worked out again when the
+-- prices change, at most every ten minutes.
+local marketPrior, marketPriorAt, marketPriorGen
+function S.MarketPrior()
+  if S.usePrior == false or not (ns.realm and ns.realm.items and ns.Market and ns.Market.Series) then return false end
+  local now = time()
+  if marketPrior ~= nil and (marketPriorGen == ns.generation or now - marketPriorAt < 600) then return marketPrior end
+  local ids = {}
+  for id, it in pairs(ns.realm.items) do
+    if type(it) == "table" and ((it.hc or 0) >= 4 or (it.h and #it.h >= 12)) then ids[#ids + 1] = id end
+  end
+  table.sort(ids)
+  local list, step = {}, max(1, floor(#ids / S.PRIOR_SAMPLE))
+  for i = 1, #ids, step do
+    list[#list + 1] = ns.Market.Series(ids[i])
+  end
+  marketPrior = S.PriorFrom(list, now)
+  marketPrior.sampled = #list
+  marketPriorAt, marketPriorGen = now, ns.generation
+  return marketPrior
 end
 
 ------------------------------------------------------------------------------
@@ -703,6 +836,15 @@ S.SIGNAL_RECENT = 3 * 3600      -- "now" is the average over this long
 S.SIGNAL_USUAL = 7 * 86400      -- compared with the middle price over this long
 S.SIGNAL_MARGIN = 0.05
 S.SIGNAL_MIN_SCANS, S.SIGNAL_MIN_SPAN = 6, 6 * 3600
+S.SIGNAL_SURE = 0.75            -- chance the price really is above (or below) usual before saying so
+
+-- The chance that a normal value is below z.
+function S.Phi(z)
+  local t = 1 / (1 + 0.2316419 * abs(z))
+  local d = 0.3989423 * exp(-z * z / 2)
+  local p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))))
+  return z >= 0 and 1 - p or p
+end
 
 -- The middle price over the last `window` seconds, each price counting for
 -- as long as it stood (until the next scan, six hours at most). Counting
@@ -761,8 +903,16 @@ function S.SellSignal(id)
   local recent = held > 0 and exp(sum / held) or last[2]
   local margin = max(S.SIGNAL_MARGIN, 0.5 * (exp(sqrt(entry.model.s2)) - 1))
   local ratio = recent / usual - 1
+  -- How sure it is that the price really is on that side of usual, given
+  -- how well the level is known right now.
+  local _, sdNow = S.Eval(entry.model, 0, true)
+  local sure = S.Phi(abs(log(recent / usual)) / max(sdNow or 0, 0.01))
+  local verdict = "fair"
+  if sure >= S.SIGNAL_SURE then
+    verdict = ratio >= margin and "good" or (ratio <= -margin and "poor" or "fair")
+  end
   return {
-    verdict = ratio >= margin and "good" or (ratio <= -margin and "poor" or "fair"),
+    verdict = verdict, sure = sure,
     ratio = ratio, recent = recent, usual = usual, margin = margin, scans = scans, span = span,
   }
 end

@@ -338,6 +338,7 @@ do
   local potion = World.WAVE.potion
   local oldDays, oldDemand, oldQty, oldFlow = ns.settings.chartDays, ns.settings.chartDemand, ns.settings.qty, ns.settings.chartFlow
   ns.settings.chartDays, ns.settings.chartDemand, ns.settings.chartFlow = 14, true, true
+  ns.settings.chartMargin = true
   local BATCH = 40
   local function caption(age)
     if age < 0 then return "An imaginary realm on a quiet week. Making " .. BATCH .. " elixirs barely pays" end
@@ -376,6 +377,7 @@ do
   f:close()
   World.wave(nil)
   ns.settings.chartDays, ns.settings.chartDemand, ns.settings.chartFlow = oldDays, oldDemand, oldFlow
+  ns.settings.chartMargin = false
   ns.UI.SetQuantity(oldQty or 1)
 end
 ns.UI.Focus(hero) settle()

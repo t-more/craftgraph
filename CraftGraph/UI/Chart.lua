@@ -63,6 +63,9 @@ function C.Create(parent)
   f.refLabel = Label("TOPRIGHT", -4, -3, "GameFontNormalSmall")
   f.vendorLabel = Label("BOTTOMRIGHT", -4, 3, "GameFontDisableSmall")
   f.flowLabel = Label("BOTTOM", 0, 3, "GameFontDisableSmall")
+  -- The margin's own caption: top left, under the top price.
+  f.marginLabel = plot:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.marginLabel:SetPoint("TOPLEFT", 4, -17)
   f.demandTop = Label("BOTTOMRIGHT", -4, 3, "GameFontDisableSmall")
   f.demandMid = Label("BOTTOMRIGHT", -4, 3, "GameFontDisableSmall")
 
@@ -619,7 +622,9 @@ function C.Update(f, id, opts)
   f.demandTop:SetText("")
   f.demandMid:SetText("")
   f.flowLines, f.demandLines, f.demandScale = 0, 0, nil
-  if opts.flow or opts.demand then
+  f.marginLines = 0
+  f.marginLabel:SetText("")
+  if opts.flow or opts.demand or opts.margin then
     local record = ns.Market.Get(id)
     local parts = {}
     local function N(x)
@@ -727,6 +732,52 @@ function C.Update(f, id, opts)
           mark[1]:SetText("|cff66ff66" .. N(mark[2]) .. "/d|r")
         end
       end
+    end
+    -- Margin: what making one and selling it leaves, over time (pink), on
+    -- its own scale with a line at nothing; then where it is heading.
+    if opts.margin and opts.margin.points then
+      local trend = opts.margin
+      local pts = {}
+      for i, p in ipairs(trend.points) do pts[i] = { p[1], p[2] } end
+      if smoothMinutes > 0 then pts = C.Smooth(pts, smoothMinutes * 60) end
+      local lowest, highest = 0, 0
+      for i = 1, #pts do
+        if (pts[i][1] - entry.now) / 86400 >= t0 then
+          lowest, highest = min(lowest, pts[i][2]), max(highest, pts[i][2])
+        end
+      end
+      local ahead = trend.word == "rising" or trend.word == "falling"
+      if ahead then
+        lowest, highest = min(lowest, trend.now + trend.perDay), max(highest, trend.now + trend.perDay)
+      end
+      local spread = max(1, highest - lowest)
+      local function MY(v) return 6 + (v - lowest) / spread * (H - 30) end
+      local r, g, b = 1, 0.5, 0.9
+      Line(0, MY(0), W, MY(0), r, g, b, 0.22, 1)
+      local lastX, lastY
+      for i = 1, #pts do
+        local day = (pts[i][1] - entry.now) / 86400
+        if day >= t0 then
+          local x, y = X(day), MY(pts[i][2])
+          if lastX and x - lastX >= 1 then
+            Line(lastX, lastY, x, y, r, g, b, 0.85, 1.2)
+            f.marginLines = f.marginLines + 1
+          end
+          if not lastX or x - lastX >= 1 then lastX, lastY = x, y end
+        end
+      end
+      -- Where it is believed to be heading over the next day: a fainter line.
+      if ahead and lastX and t1 > 0 then
+        local day = min(1, t1)
+        Line(lastX, lastY, X(day), MY(trend.now + trend.perDay * day), r, g, b, 0.45, 1.2)
+        f.marginLines = f.marginLines + 1
+      end
+      local text = "margin " .. (trend.now < 0 and "-" or "+") .. ns.Money(math.abs(trend.now)) .. " each, " .. trend.word
+      if ahead then
+        text = text .. " " .. ns.Money(math.abs(trend.perDay)) .. " a day (" .. ns.Round(trend.sure * 100) .. "% sure)"
+      end
+      f.marginLabel:SetText("|cffff80e6" .. text .. "|r")
+      f.marginText = text
     end
     f.flowLabel:SetText(table.concat(parts, "  "))
   end

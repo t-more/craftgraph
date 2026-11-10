@@ -18,6 +18,11 @@ The box in the side panel has three pictures. Its heading button switches betwee
      when it fell, taller for more.
    - **Certainty glow**, **Supply** (units listed, blue) and **Demand** (sold a day, green, with
      its scale in units a day at the right).
+   - **Margin (profit each)**: a pink line for what making one and selling it would have left
+     at each scan, after the auction house's cut, with the materials at their prices of that
+     moment. The faint pink line is nothing: above it pays, below it loses. Its caption says the
+     margin now and where it is heading ("rising 42c a day, 93% sure"), with a fainter line
+     for the next day. It only names a direction when it is fairly sure of one.
    Under the chart, click **smooth** to choose how long the lines are averaged over, from 15
    minutes to a day ("auto" lets the chart choose). Right-click goes back.
 

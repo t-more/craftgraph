@@ -2932,6 +2932,99 @@ do
 end
 
 ------------------------------------------------------------------------------
+-- The side panel: how many, the bad case, and the plan step by step.
+do
+  local J = ns.Jobs
+  local oldCount, oldQty, oldCut = C_Item.GetItemCount, ns.settings.qty, ns.settings.cut
+  local bags = {}
+  C_Item.GetItemCount = function(id) return bags[id] or 0 end
+  local function price(id, ladder) M.Record(id, ladder, { full = true }) M.Get(id).k = "c" end
+  J.Clear()
+  ns.settings.cut = 0.05
+  price(2770, { { 10, 500 } })          -- copper ore
+  price(2840, { { 60, 500 } })          -- copper bar
+  price(3576, { { 30, 1000 } })         -- tin bar
+  price(2841, { { 200, 50 } })          -- bronze bar
+  price(2771, { { 500, 10 } })          -- tin ore
+  ns.generation = ns.generation + 1
+  ns.Open(2841) RunTimers()
+  local p = ns.UI.sidePanel
+  check(p and p.amount and p.amountBox, "the side panel has an amount slider and box")
+  p.SetAmount(7)
+  RunTimers()
+  check(ns.settings.qty == 7 and p.amountBox.text == "7" and CraftGraphQuantityBox.text == "7",
+    "setting the amount there sets it for the whole window")
+  p.amountBox.text = "12"
+  p.amountBox.scripts.OnEnterPressed(p.amountBox)
+  RunTimers()
+  check(ns.settings.qty == 12 and p.amount.max >= 20, "a typed amount is taken")
+  p.amount.scripts.OnMouseWheel(p.amount, 1)
+  RunTimers()
+  check(ns.settings.qty == 13, "the mouse wheel steps by one")
+  p.SetAmount(3000) RunTimers()
+  check(ns.settings.qty == 3000 and p.amount.max == 5000, "the slider's range grows with a large amount")
+  p.SetAmount(0) RunTimers()
+  check(ns.settings.qty == 1, "and the amount is never below one")
+  p.SetAmount(10) RunTimers()
+  -- The steps, in the order to do them.
+  local steps = p.steps
+  local kinds = {}
+  for i, st in ipairs(steps) do kinds[i] = st.kind end
+  local order = table.concat(kinds, " ")
+  check(order:find("^ah mail") and order:find("craft") and kinds[#kinds] == "sell",
+    "the steps are: buy at auction, mailbox, craft, post (" .. order .. ")")
+  local last = steps[#steps]
+  check(last.text == "Post 10 at the auction house" and math.abs(last.cutPaid - 200 * 10 * 0.05) < 0.01
+    and math.abs(last.gain - 200 * 10 * 0.95) < 0.01 and last.where:find("5%", 1, true),
+    "the last step is posting, with the auction house's cut taken off: " .. last.where)
+  check(steps[1].cost and steps[1].cost > 0 and steps[1].where:find("auction house", 1, true)
+    and steps[2].text:find("mailbox", 1, true), "buying says what it costs and that it comes by mail: " .. steps[2].text)
+  check(p.plan.text:find("1. ", 1, true) and p.plan.text:find("Post 10", 1, true) and p.plan.text:find("after the cut", 1, true)
+    and p.planHeader.text == "Steps, cheapest way", "the panel lists them, numbered")
+  -- The cut is spelled out, and the bad case.
+  local e = O.Evaluate(2841, 10)
+  check(p.rows.sale.text:find("5% cut", 1, true) and math.abs(e.revenue - 200 * 10 * 0.95) < 0.01, "the sale line names the cut: " .. p.rows.sale.text)
+  check(math.abs(p.badCase - (e.profit - 2 * e.sd)) < 0.01, "the bad case is two margins under the estimate")
+  check(p.rows.bad.text:find(p.badCase < 0 and "could lose" or "still +", 1, true), "and is worded as a loss or a gain: " .. p.rows.bad.text)
+  price(2841, { { 20, 50 } })           -- the bars crash: making them loses
+  ns.generation = ns.generation + 1
+  ns.UI.Refresh() RunTimers()
+  check(p.badCase < 0 and p.rows.bad.text:find("could lose", 1, true), "a losing craft says what could be lost: " .. p.rows.bad.text)
+  price(2841, { { 200, 50 } })
+  ns.generation = ns.generation + 1
+  -- Planned: the amount changes the plan, and the next step is marked.
+  check(J.Pin(2841, 10), "planned")
+  ns.Open(2841) RunTimers()
+  check(p.planHeader.text == "Your plan, step by step" and p.plan.text:find("Next: ", 1, true), "a planned item marks the step that is next")
+  p.SetAmount(4) RunTimers()
+  local _, pin = J.IsPinned(2841)
+  check(pin.qty == 4 and ns.settings.qty == 4, "changing the amount of a planned item changes the plan")
+  -- With the materials in the bags there is nothing to buy or collect.
+  bags[2840], bags[3576] = 100, 100
+  ns.UI.Refresh() RunTimers()
+  kinds = {}
+  for i, st in ipairs(p.steps) do kinds[i] = st.kind end
+  check(table.concat(kinds, " ") == "craft sell", "holding the materials leaves only craft and post (" .. table.concat(kinds, " ") .. ")")
+  -- Where a vendor is.
+  local where, seen = M.VendorWhere(999001)
+  check(not seen and where:find("trade goods vendor", 1, true), "an item never seen at a vendor gets a general pointer")
+  GetRealZoneText = function() return "Ironforge" end
+  GetMerchantNumItems = function() return 1 end
+  GetMerchantItemID = function() return 2880 end
+  C_MerchantFrame.GetItemInfo = function() return { price = 100, stackCount = 1, numAvailable = -1, hasExtendedCost = false } end
+  FireEvent("MERCHANT_SHOW")
+  where, seen = M.VendorWhere(2880)
+  check(seen and where == "Tester in Ironforge", "a vendor that was visited is remembered by name and place: " .. where)
+  local vs = J.Steps(nil, nil, { needs = { missing = {}, ah = {}, mail = {}, vendor = { [2880] = 2 }, bank = {}, crafts = {} },
+    remaining = 2, inBags = 0, kind = "vendor" })
+  check(#vs == 1 and vs[1].kind == "vendor" and vs[1].where == "At Tester in Ironforge." and vs[1].cost == 200 and vs[1].now,
+    "a vendor step says where to go and what it costs")
+  J.Clear()
+  C_Item.GetItemCount, ns.settings.cut = oldCount, oldCut
+  ns.UI.SetQuantity(oldQty or 1)
+end
+
+------------------------------------------------------------------------------
 -- The chart's row of sun and moon icons
 do
   local f = ns.Chart.Create(UIParent)

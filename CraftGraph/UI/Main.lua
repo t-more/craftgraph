@@ -216,13 +216,120 @@ local function CreatePanel(parent)
   Tip(p.makeNow, "Make from your bags",
     "Crafts this with the materials in your bags. Your profession window must be open: "
     .. "the first press opens it.")
-  y = y - 20
+  y = y - 22
+  -- How many: a slider for a quick pick, a box for an exact number. It is
+  -- the amount everything below is worked out for, and what "Plan it" plans.
+  local AW = 150
+  local amountLabel = Text(p, "GameFontNormalSmall")
+  amountLabel:SetPoint("TOPLEFT", 14, y)
+  amountLabel:SetText("Amount")
+  local amount = CreateFrame("Button", nil, p)
+  amount:SetSize(AW, 16)
+  amount:SetPoint("TOPLEFT", 70, y + 2)
+  local track = amount:CreateTexture(nil, "BACKGROUND")
+  track:SetPoint("LEFT", 0, 0)
+  track:SetPoint("RIGHT", 0, 0)
+  track:SetHeight(4)
+  track:SetColorTexture(1, 1, 1, 0.18)
+  local fill = amount:CreateTexture(nil, "BORDER")
+  fill:SetPoint("LEFT", 0, 0)
+  fill:SetHeight(4)
+  fill:SetColorTexture(1, 0.82, 0, 0.8)
+  local thumb = amount:CreateTexture(nil, "ARTWORK")
+  thumb:SetSize(8, 14)
+  thumb:SetColorTexture(1, 0.9, 0.5, 1)
+  local mark = amount:CreateTexture(nil, "BORDER")       -- where the best amount is
+  mark:SetSize(2, 10)
+  mark:SetColorTexture(0.25, 1, 0.25, 0.9)
+  local box = CreateFrame("EditBox", nil, p, "InputBoxTemplate")
+  box:SetSize(44, 18)
+  box:SetPoint("LEFT", amount, "RIGHT", 14, 0)
+  box:SetAutoFocus(false)
+  box:SetNumeric(true)
+  box:SetMaxLetters(5)
+  amount.max = 20
+  p.amount, p.amountBox = amount, box
+  -- Sets the amount: for the whole window, and for the plan when this item is planned.
+  function p.SetAmount(qty)
+    qty = max(1, min(10000, floor((tonumber(qty) or 1) + 0.5)))
+    local id = state.center
+    if id and ns.Jobs.IsPinned(id) then ns.Jobs.SetQty(id, qty) end
+    UI.SetQuantity(qty)
+  end
+  -- Shows the amount on the slider. The range grows with the best amount
+  -- and with what is typed, in round steps.
+  function p.ShowAmount(qty, best)
+    local top = max(20, (best or 0) * 2, qty)
+    for _, round in ipairs({ 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000 }) do
+      if top <= round then top = round break end
+    end
+    amount.max = top
+    local share = (qty - 1) / max(1, top - 1)
+    fill:SetWidth(max(0.5, AW * share))
+    thumb:ClearAllPoints()
+    thumb:SetPoint("CENTER", amount, "LEFT", AW * share, 0)
+    mark:SetShown(best ~= nil and best > 0)
+    if best and best > 0 then
+      mark:ClearAllPoints()
+      mark:SetPoint("CENTER", amount, "LEFT", AW * (best - 1) / max(1, top - 1), 0)
+    end
+    amount.best = best
+    if not box:HasFocus() then box:SetText(tostring(qty)) end
+  end
+  local function FromCursor()
+    local left, scale = amount:GetLeft(), amount:GetEffectiveScale()
+    if not left or not scale or scale == 0 then return nil end
+    local share = max(0, min(1, (GetCursorPosition() / scale - left) / AW))
+    return 1 + share * (amount.max - 1)
+  end
+  amount:SetScript("OnMouseDown", function()
+    amount.dragging = true
+    local q = FromCursor()
+    if q then p.SetAmount(q) end
+  end)
+  amount:SetScript("OnMouseUp", function() amount.dragging = false end)
+  amount:SetScript("OnHide", function() amount.dragging = false end)
+  amount:SetScript("OnUpdate", function()
+    if not amount.dragging then return end
+    if not IsMouseButtonDown("LeftButton") then amount.dragging = false return end
+    local q = FromCursor()
+    if q then p.SetAmount(q) end
+  end)
+  amount:EnableMouseWheel(true)
+  amount:SetScript("OnMouseWheel", function(_, delta)
+    p.SetAmount((ns.settings.qty or 1) + delta * (IsShiftKeyDown() and 10 or 1))
+  end)
+  Tip(amount, "How many",
+    "Drag, or scroll for steps of one (hold Shift for ten), or type a number in the box. Profit, cost and "
+    .. "the steps below are worked out for this amount, and \"Plan it\" plans this many. For an item already "
+    .. "in your plan it changes the plan. The green mark is the best amount.")
+  box:SetScript("OnEnterPressed", function(self)
+    p.SetAmount(self:GetText())
+    self:ClearFocus()
+  end)
+  box:SetScript("OnEditFocusLost", function(self) p.SetAmount(self:GetText()) end)
+  box:SetScript("OnEscapePressed", function(self)
+    self:SetText(tostring(ns.settings.qty or 1))
+    self:ClearFocus()
+  end)
+  y = y - 22
   -- The answer first: what making it earns. Then what that rests on.
   Row("profit", "Profit", "GameFontHighlightLarge", 24)
+  Row("bad", "If prices turn")
   Row("cost", "Materials")
   Row("sale", "Sale")
   Row("best", "Best amount", nil, nil, 62)
   Row("time", "Time to sell")
+
+  -- What the bad-case line means, on hover.
+  local badHit = CreateFrame("Button", nil, p)
+  badHit:SetPoint("TOPLEFT", p, "TOPLEFT", 12, rowY.bad + 2)
+  badHit:SetPoint("BOTTOMRIGHT", p, "TOPRIGHT", -12, rowY.bad - 15)
+  Tip(badHit, "If prices turn against you",
+    "The profit above is the best estimate, with the auction house's cut already taken off the sale. "
+    .. "This line is a bad case: the estimate less twice its margin. Things end worse than this about "
+    .. "one time in forty. Red means you could end with less money than you started with. Not counted: "
+    .. "the listing deposit, which you lose if an auction runs out unsold.")
 
   p.useBest = Button(p, "Set", 42)
   p.useBest:SetHeight(18)
@@ -362,7 +469,8 @@ local function CreatePanel(parent)
 
   local planHeader = Text(p, "GameFontNormal")
   planHeader:SetPoint("TOPLEFT", 14, y)
-  planHeader:SetText("Cheapest way")
+  planHeader:SetText("Steps, cheapest way")
+  p.planHeader = planHeader
   y = y - 18
   p.plan = Text(p, "GameFontHighlightSmall")
   p.plan:SetPoint("TOPLEFT", 14, y)
@@ -420,6 +528,33 @@ local function PlanText(plan, graph)
     local extra = #lines - limit + 1
     while #lines > limit - 1 do table.remove(lines) end
     lines[#lines + 1] = GREY .. "... and " .. extra .. " more steps|r"
+  end
+  return table.concat(lines, "\n")
+end
+
+-- The steps of a plan as numbered lines: what to do, what it costs or
+-- brings, and where to go. The step that is next is marked for a planned
+-- item. The space under the chart holds about nine lines.
+function UI.StepsText(steps, planned, limit)
+  limit = limit or 9
+  local lines = {}
+  for i, step in ipairs(steps) do
+    local money = ""
+    if step.cost and step.cost > 0 then money = GREY .. "  costs |r" .. ns.Money(step.cost) end
+    if step.gain then money = GREY .. "  brings |r" .. ns.Money(step.gain) .. GREY .. " after the cut|r" end
+    if step.kind == "sell" and step.gain and not step.cutPaid then money = GREY .. "  brings |r" .. ns.Money(step.gain) end
+    local head = (planned and step.now) and "|cffffd100Next: " or ("|cffffd100" .. i .. ". ")
+    lines[#lines + 1] = head .. "|r" .. step.text .. money
+    -- Where to go, for the step that is next and for anything bought.
+    if step.where and (step.now or step.kind == "vendor" or step.kind == "stuck") and #steps <= 5 then
+      lines[#lines + 1] = GREY .. "    " .. step.where .. "|r"
+    end
+  end
+  if #steps == 0 then lines[1] = GREY .. "Nothing to do: you hold everything.|r" end
+  if #lines > limit then
+    local extra = #lines - limit + 1
+    while #lines > limit - 1 do table.remove(lines) end
+    lines[#lines + 1] = GREY .. "... and " .. extra .. " more lines (hover the plan window)|r"
   end
   return table.concat(lines, "\n")
 end
@@ -502,8 +637,9 @@ local function UpdatePanel()
     rows.cost:SetText(GREY .. "incomplete: prices missing|r")
   end
   if e.revenue then
-    rows.sale:SetText(ns.Money(e.revenue) .. GREY .. "  after the "
-      .. ns.Round((ns.settings.cut or 0.05) * 100) .. "% cut|r")
+    local cut = ns.settings.cut or 0.05
+    rows.sale:SetText(ns.Money(e.revenue) .. GREY .. "  after the " .. ns.Round(cut * 100) .. "% cut of |r"
+      .. ns.Money(e.revenue * cut / (1 - cut)))
   else
     rows.sale:SetText(GREY .. "no auction price|r")
   end
@@ -513,7 +649,22 @@ local function UpdatePanel()
   else
     rows.profit:SetText(GREY .. "--|r")
   end
+  -- The bad case: two margins below the estimate (about one time in forty
+  -- it ends lower still). What you stand to lose is said as a loss.
+  if e.profit then
+    local bad = e.profit - 2 * (e.sd or 0)
+    p.badCase = bad
+    if bad < 0 then
+      rows.bad:SetText("|cffff5040could lose " .. ns.Money(-bad) .. "|r")
+    else
+      rows.bad:SetText("|cff40ff40still +" .. ns.Money(bad) .. "|r")
+    end
+  else
+    p.badCase = nil
+    rows.bad:SetText(GREY .. "--|r")
+  end
 
+  p.ShowAmount(qty, nil)
   p.useBest:Hide()
   if craftable and e.profit then
     local bestQty, best, demandKnown = ns.Opt.BestQuantity(id)
@@ -522,6 +673,7 @@ local function UpdatePanel()
         )
       p.useBest.qty = bestQty
       p.useBest:SetShown(bestQty ~= qty)
+      p.ShowAmount(qty, bestQty)
     else
       rows.best:SetText(GREY .. "none: it loses money|r")
     end
@@ -578,11 +730,10 @@ local function UpdatePanel()
       days = ns.settings.chartDays, flow = ns.settings.chartFlow, demand = ns.settings.chartDemand,
       grid = ns.settings.chartGrid, bars = ns.settings.chartBars })
   end
-  local nextStep = ""
-  if state.job and state.job.text then
-    nextStep = "|cffffd100Next:|r " .. state.job.text .. "\n"
-  end
-  p.plan:SetText(nextStep .. PlanText(plan, state.graph))
+  local planned = state.job and state.job.pin and state.job.pin.id == id
+  p.planHeader:SetText(planned and "Your plan, step by step" or "Steps, cheapest way")
+  p.steps = ns.Jobs.Steps(id, qty, state.job)
+  p.plan:SetText(UI.StepsText(p.steps, planned))
 end
 
 ------------------------------------------------------------------------------
@@ -895,6 +1046,16 @@ local function WorthTooltip(row)
     GameTooltip:AddLine("List what you already hold. Opens the Sell bags list.", 1, 1, 1, true)
   end
   GameTooltip:AddDoubleLine("Expected profit", ns.Money(d.profit) .. " \194\177" .. ns.Money(d.sd), 1, 0.82, 0, 0.25, 1, 0.25)
+  -- What could be lost, and that the auction house's share is already off.
+  if (d.sd or 0) > 0 then
+    local bad = d.profit - 2 * d.sd
+    GameTooltip:AddDoubleLine("If prices turn", bad < 0 and ("could lose " .. ns.Money(-bad)) or ("still +" .. ns.Money(bad)),
+      1, 0.82, 0, bad < 0 and 1 or 0.25, bad < 0 and 0.31 or 1, 0.25)
+  end
+  if d.kind ~= "tovendor" then
+    GameTooltip:AddLine("The auction house's " .. ns.Round((ns.settings.cut or 0.05) * 100)
+      .. "% cut of each sale is already taken off.", 0.6, 0.6, 0.6, true)
+  end
   if d.id and d.kind ~= "tovendor" and d.kind ~= "bags" then
     for _, line in ipairs(UI.SellSignalLines(d.id)) do
       GameTooltip:AddLine(line[1], line[2], line[3], line[4], true)
@@ -1215,7 +1376,8 @@ function UI.UpdateWorth()
       row.outlay:SetText(d.kind == "later" and "" or (d.outlay > 0 and ns.Money(d.outlay) or (GREY .. "nothing|r")))
       row.profit:SetText((d.kind == "later" and d.when.hours == 0) and (GREY .. "sell now|r")
         or "|cff40ff40+" .. ns.Money(d.profit) .. "|r"
-        .. (d.sd > 0 and (GREY .. " \194\177|r" .. ns.Money(CoarseMoney(d.sd))) or ""))
+        -- The margin turns orange when a bad case would be a loss.
+        .. (d.sd > 0 and (((d.profit - 2 * d.sd < 0) and "|cffff8c33" or GREY) .. " \194\177|r" .. ns.Money(CoarseMoney(d.sd))) or ""))
       row.effort:SetText(d.effort)
       row.signal:SetText(UI.SellSignalText(d))
       local text, enabled, fn, tip = DealAction(d)
@@ -2716,10 +2878,35 @@ local function CreateHUD()
       GameTooltip:AddLine(job.text, 1, 1, 1, true)
       if job.inBags > 0 then GameTooltip:AddLine(job.inBags .. " made and in your bags.", 0.7, 0.7, 0.7) end
       if (job.pin.posted or 0) > 0 then GameTooltip:AddLine(job.pin.posted .. " posted at auction.", 0.7, 0.7, 0.7) end
+      GameTooltip:AddLine(" ")
+      GameTooltip:AddLine("Step by step", 1, 0.82, 0)
+      for i, step in ipairs(ns.Jobs.Steps(nil, nil, job)) do
+        local money = step.cost and step.cost > 0 and ("costs " .. ns.Money(step.cost))
+          or step.gain and ("brings " .. ns.Money(step.gain)) or " "
+        if step.now then
+          GameTooltip:AddDoubleLine("> " .. step.text, money, 1, 0.82, 0, 1, 1, 1)
+        else
+          GameTooltip:AddDoubleLine(i .. ". " .. step.text, money, 1, 1, 1, 1, 1, 1)
+        end
+        if step.where then GameTooltip:AddLine("    " .. step.where, 0.6, 0.6, 0.6, true) end
+      end
       local pin = job.pin
       if pin.goal then
         GameTooltip:AddLine("Goal: " .. ns.Deals.KIND[pin.goal.kind]:lower() .. ", planned for "
           .. Signed(pin.goal.profit or 0) .. ".", 1, 0.82, 0, true)
+      end
+      -- What the auction house keeps, and what could be lost.
+      if not pin.goal then
+        local e = ns.Opt.Evaluate(pin.id, pin.qty)
+        if e.profit and e.revenue then
+          local cut = ns.settings.cut or 0.05
+          local bad = e.profit - 2 * (e.sd or 0)
+          GameTooltip:AddLine(" ")
+          GameTooltip:AddDoubleLine("Auction house cut (" .. ns.Round(cut * 100) .. "%), already taken off",
+            ns.Money(e.revenue * cut / (1 - cut)), 1, 1, 1, 1, 1, 1)
+          GameTooltip:AddDoubleLine("If prices turn", bad < 0 and ("|cffff5040could lose " .. ns.Money(-bad) .. "|r")
+            or ("|cff40ff40still +" .. ns.Money(bad) .. "|r"), 1, 1, 1, 1, 1, 1)
+        end
       end
       AddProjection(ns.Jobs.Projection(pin.id, pin.qty, pin.goal))
       local st = ns.Jobs.TrackStats(pin)
@@ -3267,6 +3454,7 @@ local function Create()
   dataPage = CreateDataPage(inset)
 
   panel = CreatePanel(frame)
+  UI.sidePanel, panel.rows = panel, rows
 
   frame:SetScript("OnHide", function()
     ns.settings.wasOpen = false
@@ -3996,7 +4184,7 @@ function UI.SetupSteps()
       box = "python3 sync/craftgraph_setup.py", button = "Done: look again", again = true },
     { key = "key", done = h ~= nil and h.key == true, title = "Enter your own Blizzard API key on the helper's page",
       text = "The page shows what you take on: the key is yours and so are Blizzard's terms. Make a free key at "
-        .. "this address (sign in, Create Client, any name), enter it on the page, then press the button. "
+        .. "this address (sign in, Create Client; the page says what to fill in), enter it there, then press the button. "
         .. "The key stays in one private file on your computer and never comes into the game.",
       box = "https://develop.battle.net/access/clients", button = "Done: look again", again = true },
     { key = "watch", done = h ~= nil and h.watch == true, title = "Let the buttons here work",

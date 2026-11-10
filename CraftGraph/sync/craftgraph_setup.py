@@ -154,6 +154,11 @@ PAGE = r"""<!doctype html>
   .ok { color:#66e666; } .warn { color:#ff8c33; }
   .tick { display:flex; gap:10px; align-items:flex-start; margin:10px 0 0; }
   .tick input { margin-top:5px; transform:scale(1.3); }
+  table.form { border-collapse:collapse; margin:8px 0; width:100%; }
+  table.form td { border-top:1px solid #3a3020; padding:7px 8px 7px 0; vertical-align:top; }
+  table.form td:first-child { white-space:nowrap; color:#ffd100; width:1%; padding-right:14px; }
+  code { background:#0c0a08; border:1px solid #3a3020; border-radius:4px; padding:1px 5px; color:#d8ccb0; }
+  code.copy { cursor:pointer; } code.copy:hover { border-color:#c8a45a; } code.copied { border-color:#66e666; }
 </style></head><body><main>
 <h1>CraftGraph: online features</h1>
 <p class="dim">Optional. The addon works without any of this. This page runs on your computer only.</p>
@@ -181,6 +186,17 @@ PAGE = r"""<!doctype html>
   <h2>2. Your API key</h2>
   <p>Make a free one at <a href="https://develop.battle.net/access/clients" target="_blank" rel="noopener">develop.battle.net</a>:
      sign in, <i>Create Client</i>, any name, no redirect URL. Copy its two codes here.</p>
+  <p><b>What to fill in on Blizzard's "Create Client" form</b> (click a grey text to copy it):</p>
+  <table class="form">
+    <tr><td>Client Name</td><td>Any name nobody else has used, such as <code class="copy">craftgraph-yourname-personal</code>.
+      Do not put "Blizzard" or "WoW" in it.</td></tr>
+    <tr><td>Redirect URLs</td><td>Leave empty. If the form insists: <code class="copy">http://localhost</code></td></tr>
+    <tr><td>Service URL</td><td>Leave empty. If the form insists: <code class="copy">http://localhost</code>
+      (the tool runs only on your own computer).</td></tr>
+    <tr><td>Intended Use</td><td><code class="copy">Personal, non-commercial use. A script on my own computer reads the auction house data of my own realm from the Game Data API about once an hour, using the client credentials flow, to show prices in a personal crafting addon. The data stays on my computer, is not passed on, and is deleted within 30 days.</code>
+      <br><small>Write what is true for you; this is what the tool does.</small></td></tr>
+  </table>
+  <p>Blizzard then shows the client's <b>Client ID</b> and <b>Client Secret</b>. Those two go here:</p>
   <p id="keystate" class="dim"></p>
   <label for="cid">Client ID</label><input type="text" id="cid" autocomplete="off" spellcheck="false">
   <label for="sec">Client Secret</label><input type="password" id="sec" autocomplete="off" spellcheck="false">
@@ -278,6 +294,11 @@ async function refresh() {
   $("oldest").innerHTML = t;
   if (!s.saved_data) $("o-run").textContent = "The addon has no saved data yet. Play once with CraftGraph loaded, then log out or /reload.";
 }
+document.querySelectorAll("code.copy").forEach(c => c.addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText(c.textContent); } catch (e) {
+    const r = document.createRange(); r.selectNodeContents(c); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+  c.classList.add("copied"); setTimeout(() => c.classList.remove("copied"), 900);
+}));
 $("accept").addEventListener("change", refresh);
 document.querySelectorAll("button[data-act]").forEach(b => b.addEventListener("click", async () => {
   const act = b.dataset.act, out = $(where[act]);
@@ -393,7 +414,7 @@ def main():
     server, address = serve(watch=True)
     print("CraftGraph setup is open in your browser. If it did not open, go to:")
     print("  " + address)
-    print("Press Ctrl+C here, or just close this window, when you are done.")
+    print("Press Ctrl+C here, or just close this window, when you are done.", flush=True)
     try:
         while time.time() - last_used[0] < IDLE_SECONDS:
             time.sleep(1)

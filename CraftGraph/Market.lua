@@ -1380,6 +1380,16 @@ function M.VendorBuy(id)
   return nil
 end
 
+-- Where a vendor item can be bought, in words: the vendor it was last seen
+-- at, or a general pointer when it has only been read from the game's data.
+function M.VendorWhere(id)
+  local at = ns.db and ns.db.vendorAt and ns.db.vendorAt[id]
+  if at and (at.n or at.z) then
+    return (at.n or "a vendor") .. (at.z and (" in " .. at.z) or ""), true
+  end
+  return "a trade goods vendor (most towns have one; not seen at one yet)", false
+end
+
 local function ScanMerchant()
   if not (GetMerchantNumItems and GetMerchantItemID and C_MerchantFrame and C_MerchantFrame.GetItemInfo) then
     return
@@ -1394,6 +1404,13 @@ local function ScanMerchant()
       if ns.db.vendor[id] ~= unit then
         ns.db.vendor[id] = unit
         changed = true
+      end
+      -- Remember who sold it and where, so a plan can say where to go.
+      local who = UnitName and (UnitName("npc") or UnitName("target")) or nil
+      local zone = (GetRealZoneText and GetRealZoneText()) or (GetZoneText and GetZoneText()) or nil
+      if who or zone then
+        ns.db.vendorAt = ns.db.vendorAt or {}
+        ns.db.vendorAt[id] = { n = who, z = zone ~= "" and zone or nil }
       end
     end
   end

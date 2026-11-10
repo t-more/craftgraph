@@ -1055,6 +1055,97 @@ function J.Status(n, remaining, inBags, posted)
   return "Ready", "craft"
 end
 
+-- Every step of making `qty` of an item, in the order to do them: buy at
+-- the auction house, pick up from the mailbox, buy from vendors (with where),
+-- take from the bank, craft, post. `job` (from J.All) gives the steps still
+-- open for a planned item; without it they are worked out from what the
+-- player holds now. Each step: { kind, text, where, cost, gain, now }.
+function J.Steps(id, qty, job)
+  local needs, remaining, inBags, pin
+  if job then
+    needs, remaining, inBags, pin = job.needs, job.remaining, job.inBags, job.pin
+    if pin then id, qty = pin.id, pin.qty end
+  else
+    needs, remaining, inBags = J.Needs(id, qty), qty, 0
+  end
+  local steps = {}
+  local plan = needs.plan
+  local function costOf(map, costs, bought)
+    local total = 0
+    for item, k in pairs(map) do
+      if costs and costs[item] and bought[item] and bought[item] > 0 then
+        total = total + costs[item] * min(1, k / bought[item])
+      else
+        local info = M.Info(item)
+        total = total + (info and info.price or 0) * k
+      end
+    end
+    return total
+  end
+  if next(needs.missing) then
+    steps[#steps + 1] = { kind = "stuck", text = "No source for " .. NameList(needs.missing, 2),
+      where = "Not at auction in the last scan and not sold by a vendor. Scan again, or farm it." }
+  end
+  if next(needs.ah) then
+    steps[#steps + 1] = { kind = "ah", text = "Buy at auction: " .. NameList(needs.ah, 3),
+      where = "At any auction house. The plan window has a Buy button there.",
+      cost = costOf(needs.ah, plan and plan.buyCost, plan and plan.buy or {}) }
+  end
+  if next(needs.ah) or next(needs.mail) then
+    steps[#steps + 1] = { kind = "mail", text = "Pick up " .. ns.Round(Total(needs.ah) + Total(needs.mail))
+      .. " from the mailbox", where = "What you buy at auction arrives by mail, at any mailbox." }
+  end
+  -- One step for each place a vendor item is sold.
+  local places, order = {}, {}
+  for item, k in pairs(needs.vendor) do
+    local where = M.VendorWhere(item)
+    if not places[where] then
+      places[where] = {}
+      order[#order + 1] = where
+    end
+    places[where][item] = k
+  end
+  table.sort(order)
+  for _, where in ipairs(order) do
+    local cost = 0
+    for item, k in pairs(places[where]) do cost = cost + (M.VendorBuy(item) or 0) * k end
+    steps[#steps + 1] = { kind = "vendor", text = "Buy from a vendor: " .. NameList(places[where], 3),
+      where = "At " .. where .. ".", cost = cost }
+  end
+  if next(needs.bank) then
+    steps[#steps + 1] = { kind = "bank", text = "Take from the bank: " .. NameList(needs.bank, 3), where = "At any bank." }
+  end
+  for _, c in ipairs(needs.crafts) do
+    steps[#steps + 1] = { kind = "craft", text = "Craft " .. ns.Data.recipes[c.spell][6] .. " x" .. ns.Round(c.casts),
+      spell = c.spell }
+  end
+  -- The last step: where the money comes back.
+  local goal = pin and pin.goal
+  local cut = ns.settings and ns.settings.cut or 0.05
+  if goal and goal.kind == "tovendor" then
+    steps[#steps + 1] = { kind = "sell", text = "Sell " .. ns.Round(qty) .. " to a vendor",
+      where = "Any vendor buys it. No auction cut.", gain = ns.VendorSell(id) * qty }
+  elseif goal or (plan and plan.craftable) then
+    local each = goal and goal.sellEach or (M.Info(id) and M.Info(id).price)
+    -- A recipe that makes several at a time may make more than was asked for.
+    local units = qty
+    if not goal then units = max(qty, O.Plan(id, qty).produced or qty) end
+    local gross = each and each * units or nil
+    steps[#steps + 1] = { kind = "sell", text = "Post " .. ns.Round(units) .. " at the auction house",
+      where = gross and ("The auction house keeps " .. ns.Round(cut * 100) .. "% of the sale: "
+        .. ns.Money(gross * cut) .. " of " .. ns.Money(gross) .. ".") or "No auction price is known yet.",
+      gain = gross and gross * (1 - cut) or nil, cutPaid = gross and gross * cut or nil }
+  end
+  -- Which one is next.
+  local kind = job and job.kind
+  if job and remaining <= 0 then kind = inBags > 0 and "sell" or "done" end
+  for _, step in ipairs(steps) do
+    if kind and step.kind == kind then step.now = true break end
+  end
+  if not kind and steps[1] then steps[1].now = true end
+  return steps
+end
+
 -- Every pinned job with its needs and next step.
 function J.All()
   local out = {}

@@ -460,11 +460,11 @@ local function CreatePanel(parent)
 
   chart = ns.Chart.Create(p)
   chart:SetPoint("TOPLEFT", 12, y)
-  chart:SetSize(PANEL_W - 24, 174)
+  chart:SetSize(PANEL_W - 24, 160)
   p.week = UI.CreateWeekStrip(p)
   p.week:SetPoint("TOPLEFT", 12, y)
-  p.week:SetSize(PANEL_W - 24, 174)
-  y = y - 180
+  p.week:SetSize(PANEL_W - 24, 160)
+  y = y - 166
   Divider()
 
   local planHeader = Text(p, "GameFontNormal")
@@ -536,27 +536,44 @@ end
 -- brings, and where to go. The step that is next is marked for a planned
 -- item. The space under the chart holds about nine lines.
 function UI.StepsText(steps, planned, limit)
-  limit = limit or 9
-  local lines = {}
+  limit = limit or 6
+  local lines, at = {}, {}
   for i, step in ipairs(steps) do
     local money = ""
     if step.cost and step.cost > 0 then money = GREY .. "  costs |r" .. ns.Money(step.cost) end
-    if step.gain then money = GREY .. "  brings |r" .. ns.Money(step.gain) .. GREY .. " after the cut|r" end
-    if step.kind == "sell" and step.gain and not step.cutPaid then money = GREY .. "  brings |r" .. ns.Money(step.gain) end
+    if step.gain then
+      money = GREY .. "  brings |r" .. ns.Money(step.gain) .. (step.cutPaid and (GREY .. " after the cut|r") or "")
+    end
     local head = (planned and step.now) and "|cffffd100Next: " or ("|cffffd100" .. i .. ". ")
     lines[#lines + 1] = head .. "|r" .. step.text .. money
-    -- Where to go, for the step that is next and for anything bought.
-    if step.where and (step.now or step.kind == "vendor" or step.kind == "stuck") and #steps <= 5 then
-      lines[#lines + 1] = GREY .. "    " .. step.where .. "|r"
-    end
+    at[#at + 1] = step
   end
   if #steps == 0 then lines[1] = GREY .. "Nothing to do: you hold everything.|r" end
   if #lines > limit then
     local extra = #lines - limit + 1
-    while #lines > limit - 1 do table.remove(lines) end
-    lines[#lines + 1] = GREY .. "... and " .. extra .. " more lines (hover the plan window)|r"
+    while #lines > limit - 1 do table.remove(lines) table.remove(at) end
+    lines[#lines + 1] = GREY .. "... and " .. extra .. " more steps (hover the plan window)|r"
   end
-  return table.concat(lines, "\n")
+  -- Where to go, while there is room: first for the step that is next,
+  -- then for anything that has to be found (a vendor, a missing source).
+  local room, chosen = limit - #lines, {}
+  local function pick(want)
+    for _, step in ipairs(at) do
+      if room > 0 and step.where and not chosen[step] and want(step) then
+        chosen[step] = true
+        room = room - 1
+      end
+    end
+  end
+  pick(function(step) return step.kind == "stuck" end)
+  pick(function(step) return planned and step.now end)
+  pick(function(step) return step.kind == "vendor" end)
+  local out = {}
+  for i, line in ipairs(lines) do
+    out[#out + 1] = line
+    if at[i] and chosen[at[i]] then out[#out + 1] = GREY .. "    " .. at[i].where .. "|r" end
+  end
+  return table.concat(out, "\n")
 end
 
 local function UpdatePanel()

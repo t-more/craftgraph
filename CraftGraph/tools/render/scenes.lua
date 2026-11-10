@@ -330,6 +330,54 @@ do
   M.ClearShared()
   ns.UI.ShowData()
 end
+------------------------------------------------------------------------------
+-- An imaginary rush: a crowd of new players arrives, and what riding the
+-- wave would have looked like in the window.
+------------------------------------------------------------------------------
+do
+  local potion = World.WAVE.potion
+  local oldDays, oldDemand, oldQty, oldFlow = ns.settings.chartDays, ns.settings.chartDemand, ns.settings.qty, ns.settings.chartFlow
+  ns.settings.chartDays, ns.settings.chartDemand, ns.settings.chartFlow = 14, true, true
+  local BATCH = 40
+  local function caption(age)
+    if age < 0 then return "An imaginary realm on a quiet week. Making " .. BATCH .. " elixirs barely pays" end
+    if age < 1 then return "Day 1: a crowd of new players arrives. They all want the same elixir" end
+    if age < 2 then return "The shelf is bought nearly empty and the price doubles" end
+    if age < 5 then return "Their gathering floods the market with herbs: cheap materials, dear elixir. Make and sell now" end
+    if age < 9 then return "Other alchemists catch up: more is listed, the price slides, the window closes" end
+    return "Back to normal. The wave lasted a week; the window to ride it, about four days"
+  end
+  local profits = {}
+  for step = -2, 26 do
+    local age = step / 2
+    World.wave(age)
+    ns.UI.Focus(potion)
+    ns.UI.SetQuantity(BATCH) settle()
+    local e = ns.Opt.Evaluate(potion, BATCH)
+    profits[age] = e.profit
+    frame("wave", { caption = caption(age), captionScale = 1.25 }, (age == -1 or age == 13) and 2.5 or 0.7)
+    if age == 3 then
+      still("wave-ride", { zoom = 1.5 })
+      tour("An imaginary rush of new players: cheap herbs, dear elixir. The window says make and sell now", 4.5)
+      ns.UI.ShowTrends(true) settle()
+      still("wave-trends", { zoom = 1.5 })
+      ns.UI.ShowTrends(false) settle()
+    end
+    if age == 13 then still("wave-after", { zoom = 1.5 }) end
+  end
+  -- What it came to, for the guide: one batch each evening.
+  local ride, late = 0, 0
+  for day = 1, 5 do ride = ride + (profits[day] or 0) end
+  for day = 9, 13 do late = late + (profits[day] or 0) end
+  local f = assert(io.open(OUT .. "/wave.txt", "w"))
+  f:write(string.format("batch %d\nquiet %.0f\n", BATCH, profits[-1] or 0))
+  for day = 0, 13 do f:write(string.format("day %d profit %.0f\n", day, profits[day] or 0)) end
+  f:write(string.format("ride days 1-5: %.0f\nlate days 9-13: %.0f\n", ride, late))
+  f:close()
+  World.wave(nil)
+  ns.settings.chartDays, ns.settings.chartDemand, ns.settings.chartFlow = oldDays, oldDemand, oldFlow
+  ns.UI.SetQuantity(oldQty or 1)
+end
 ns.UI.Focus(hero) settle()
 tour("CraftGraph: /cg in game. Everything here was drawn from simulated data", 4)
 

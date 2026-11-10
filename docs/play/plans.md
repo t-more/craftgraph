@@ -57,4 +57,4 @@ which is lost when an auction runs out unsold, and the higher cut of a neutral a
 removes one item. **Clear**, pressed twice, empties the plan. On the graph, each material shows
 what you own in bags and bank and lets you set how much of it the plan may use.
 
-Next: [When to sell](timing.md)
+See it at work: [Riding a wave](../examples/riding-a-wave.md). Next: [When to sell](timing.md)

@@ -1,6 +1,6 @@
 # The CraftGraph guide
 
-Three levels. Read down as far as you care to.
+Read down as far as you care to.
 
 ```
 1. Getting started      what to click first
@@ -10,7 +10,7 @@ Three levels. Read down as far as you care to.
 2. Playing with it      what each screen is for
    ├─ The graph
    ├─ Opportunities
-   ├─ Plans
+   ├─ Plans (how many, step by step, what you could lose)
    ├─ When to sell
    ├─ Trends
    └─ Auto scan
@@ -21,7 +21,11 @@ Three levels. Read down as far as you care to.
    ├─ How fast things sell
    └─ Data sources
 
-4. Under the hood       for the curious and for whoever works on it
+4. Examples             what it looks like when it matters
+   ├─ A real item, today
+   └─ Riding a wave (imaginary)
+
+5. Under the hood       for the curious and for whoever works on it
    ├─ The price model
    ├─ The sales estimate
    ├─ How history is stored
@@ -46,12 +50,18 @@ Three levels. Read down as far as you care to.
 - [How fast things sell](understand/sales.md)
 - [Data sources](understand/data-sources.md)
 
-## 4. Under the hood
+## 4. Examples
+- [A real item, today](examples/real-item.md): Elixir of Lesser Agility from real scans
+- [Riding a wave](examples/riding-a-wave.md): an imaginary rush of new players, and the four
+  days in which it pays to act
+
+## 5. Under the hood
 - [Overview](internals/README.md)
 - [The price model](internals/price-model.md)
 - [The sales estimate](internals/sales-model.md)
 - [How history is stored](internals/storage.md)
 - [Working on the addon](internals/developing.md)
 
-All pictures in this guide are drawn from the addon's real interface code on a simulated market,
-outside the game. Fonts and frames are close to the game's, not identical.
+The pictures in this guide are drawn from the addon's real interface code, outside the game, on a
+simulated market. The one exception is [A real item, today](examples/real-item.md), which uses
+real scans. Fonts and frames are close to the game's, not identical.

@@ -244,4 +244,98 @@ function World.scan(hours)
   wow.runTimers()
 end
 
+------------------------------------------------------------------------------
+-- An imaginary rush, to show what riding a wave looks like. `age` days ago
+-- a crowd of new players arrived (negative: they have not come yet). They
+-- all want the same potion, so it is bought nearly empty and its price
+-- doubles; a day later their own gathering floods the market with herbs,
+-- so the materials get cheap while the potion is still dear; within a
+-- week other alchemists catch up and it is over. World.wave(nil) puts the
+-- ordinary simulated history back.
+------------------------------------------------------------------------------
+local WAVE = { potion = 3390, herbs = { 2452, 3355 } }     -- Elixir of Lesser Agility; Swiftthistle, Wild Steelbloom
+World.WAVE = WAVE
+local original = {}
+local function shape(d, points)
+  -- points: { day, value, day, value, ... }; straight lines between them.
+  if d <= points[1] then return points[2] end
+  for i = 3, #points, 2 do
+    if d <= points[i] then
+      local d0, v0, d1, v1 = points[i - 2], points[i - 1], points[i], points[i + 1]
+      return v0 + (v1 - v0) * (d - d0) / (d1 - d0)
+    end
+  end
+  return points[#points]
+end
+local SHAPES = {
+  potion = {
+    price = { 0, 1, 1.5, 2.3, 4, 2.0, 9, 1.12, 13, 1.02 },
+    stock = { 0, 1, 1, 0.15, 4, 0.6, 9, 1.6, 13, 1.1 },
+    sold = { 0, 60, 1, 420, 4, 300, 9, 110, 13, 70 },
+  },
+  herb = {
+    price = { 0, 1, 1, 1.45, 3, 0.8, 7, 0.68, 13, 0.97 },
+    stock = { 0, 1, 1, 0.5, 4, 2.8, 10, 2.0, 14, 1.3 },
+    sold = { 0, 200, 1, 700, 5, 500, 10, 260, 14, 220 },
+  },
+}
+
+function World.wave(age)
+  local all = { WAVE.potion, WAVE.herbs[1], WAVE.herbs[2] }
+  for _, id in ipairs(all) do
+    if original[id] == nil then original[id] = ns.realm.items[id] or false end
+  end
+  if age == nil then
+    for _, id in ipairs(all) do ns.realm.items[id] = original[id] or nil end
+    ns.generation = ns.generation + 1
+    return
+  end
+  -- Steady prices to start from: the potion a little over its materials.
+  local herbBase = { [WAVE.herbs[1]] = 310, [WAVE.herbs[2]] = 120 }
+  local potionBase = (310 + 120 + 36) * 1.10 / 0.95
+  local saveSeed = seed
+  seed = 4242
+  for _, id in ipairs(all) do
+    ns.realm.items[id] = nil
+    local kind = id == WAVE.potion and "potion" or "herb"
+    local sh = SHAPES[kind]
+    local start = id == WAVE.potion and potionBase or herbBase[id]
+    local depth = id == WAVE.potion and 180 or 420
+    local lastT
+    for step = DAYS * 24, 0, -1 do
+      local t = END - step * 3600 - math.floor(rnd() * 600)
+      local hour = tonumber(os.date("%H", t))
+      local scanned = (hour >= 9 and rnd() < 0.8) or (hour < 9 and rnd() < 0.12)
+      if step == 0 then scanned, t = true, END - 420 end
+      if scanned then
+        local d = age - (END - t) / 86400            -- days since the crowd arrived
+        local evening = math.cos((hour - 20) / 24 * 2 * math.pi)
+        local price = start * shape(d, sh.price) * math.exp(0.02 * evening + 0.015 * gauss())
+        local amount = depth * shape(d, sh.stock) * math.exp(0.12 * evening + 0.06 * gauss())
+        local raw, p = {}, price
+        for i = 1, 4 do
+          raw[#raw + 1] = { math.max(1, math.floor(p + 0.5)), math.max(1, math.floor(amount / 4 * (0.7 + 0.2 * i))),
+            SELLERS[1 + (id + i * 3) % #SELLERS] }
+          p = p * (1.03 + 0.02 * i)
+        end
+        wow.now = t
+        M.Record(id, raw, { full = true, t = t, perAuction = false })
+        local rec = ns.realm.items[id]
+        local rate = shape(d, sh.sold) * math.exp(0.3 * evening + 0.2 * gauss())
+        local gap = lastT and math.min((t - lastT) / 86400, 0.5) or 1 / 24
+        lastT = t
+        rec.sh = rec.sh or {}
+        rec.sh[#rec.sh + 1], rec.sh[#rec.sh + 2] = t, math.floor(rate + 0.5)
+        local fade = 0.5 ^ (gap / 7)
+        rec.sa = (rec.sa or 0) * fade + rate * gap
+        rec.sc = (rec.sc or 0) * fade + rate * gap / 20
+        rec.sb = (rec.sb or 0) * fade + gap
+      end
+    end
+  end
+  seed = saveSeed
+  wow.now = END
+  ns.generation = ns.generation + 1
+end
+
 return World

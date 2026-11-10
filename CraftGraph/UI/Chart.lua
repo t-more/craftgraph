@@ -523,7 +523,9 @@ function C.Update(f, id, opts)
         local pct = ns.Round(math.abs(off) * 100)
         -- At the right, where the forecast leaves room; clear of the
         -- demand scale when that is shown.
-        Mark(f.gridLabels, nGrid, ns.Money(value) .. (pct > 0 and ("  " .. (off > 0 and "+" or "-") .. pct .. "%") or ""),
+        -- Near the top the line is drawn but not named: the cost-to-make
+        -- label and the note about forecasts sit there.
+        Mark(f.gridLabels, nGrid, y < H - 34 and (ns.Money(value) .. (pct > 0 and ("  " .. (off > 0 and "+" or "-") .. pct .. "%") or "")) or "",
           "BOTTOMRIGHT", W - (opts.demand and 48 or 4), y + 1)
       end
       value = value + step

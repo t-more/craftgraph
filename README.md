@@ -5,8 +5,8 @@ Open it in game with `/cg`.
 
 ![A quick tour](docs/media/tour.gif)
 
-*A one-minute tour ([video](docs/media/tour.mp4)). Every picture here was drawn from the addon's
-own interface code on a simulated market, outside the game.*
+*A one-minute tour ([video](docs/media/tour.mp4)). The pictures here were drawn from the addon's
+own interface code, outside the game, on a simulated market unless they say "real".*
 
 ## What you can do with it
 
@@ -37,6 +37,27 @@ to smooth: an hour shows every wiggle, a day shows the story.
 you are. After every scan it shows what the plan should earn now, and whether that went up or down.
 
 ![A plan following the market](docs/media/plan.gif)
+
+**Follow it step by step.** Pick how many with a slider. The side panel lists every step in
+order: what to buy at auction, the trip to the mailbox, which vendor and where, what to craft,
+what posting brings after the auction house's cut. Under the profit, one line says what you
+could lose if prices turn.
+
+![Amount, profit, possible loss and steps](docs/media/overview.png)
+
+**Ride a wave.** When a crowd of new players arrives, the things they all want double in price
+while their own gathering makes the materials cheap. For a few days the same work pays four
+times as much. This is an imaginary rush, played through in the window:
+
+![An imaginary rush of new players](docs/media/wave.gif)
+
+[How to read it, and when to get out](docs/examples/riding-a-wave.md).
+
+**See it on a real market.** Fourteen hours of real scans of one elixir on a two-day-old economy:
+a thin margin, a line in red saying what could be lost, and no forecast, because there is not
+enough to go on yet. [The walk-through](docs/examples/real-item.md).
+
+![A real item from real scans](docs/media/real-graph.png)
 
 **Share prices with friends.** Export your latest scan as text, send it, and they import it with
 one paste. It tells them plainly whether it worked.
@@ -73,5 +94,6 @@ one step at a time, and you can stop wherever you like.
 |---|---|
 | get going | [Your first session](docs/start/first-session.md) |
 | make gold | [Opportunities](docs/play/opportunities.md), [Plans](docs/play/plans.md), [When to sell](docs/play/timing.md) |
+| see it in action | [A real item, today](docs/examples/real-item.md), [Riding a wave](docs/examples/riding-a-wave.md) |
 | understand the numbers | [Prices and history](docs/understand/prices-and-history.md), [Forecasts](docs/understand/forecasts.md) |
 | see how it is built | [Under the hood](docs/internals/README.md) |

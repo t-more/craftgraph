@@ -18,6 +18,7 @@ for dir in "$src"/*/; do
   width=900
   [ "$name" = tour ] && width=1100
   [ "$name" = graph ] && width=1100
+  [ "$name" = wave ] && width=1100
   ffmpeg -loglevel error -y -f concat -safe 0 -i "$dir/frames.txt" \
     -vf "fps=12,scale='min($width,iw)':-2:flags=lanczos,split[a][b];[a]palettegen=max_colors=160:stats_mode=diff[p];[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" \
     "$out/$name.gif"

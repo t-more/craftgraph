@@ -59,6 +59,9 @@ source of their own, by character name, with a switch.
 - **What becomes public** when you share: your character's name, your GitHub name, and the prices
   from your scans of the last day.
 
+Your own shared prices are never imported back; you are listed first among the players, to show
+that you are there.
+
 Everything else stays on your computer. Without this the addon is unchanged.
 
 ## The optional Python tool

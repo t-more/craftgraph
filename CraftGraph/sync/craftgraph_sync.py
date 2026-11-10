@@ -1036,10 +1036,10 @@ def cmd_data_pull(args, own=None):
             listing = []
         else:
             raise
-    texts, lines = [], []
+    texts, lines, others = [], [], 0
     for entry in listing:
         name = entry.get("name", "")
-        if not name.endswith(".cg.json") or name == "%s.cg.json" % own:
+        if not name.endswith(".cg.json"):
             continue
         request = urllib.request.Request(entry["download_url"], headers={"User-Agent": USER_AGENT})
         text = urllib.request.urlopen(request, timeout=60).read().decode("utf-8")
@@ -1052,9 +1052,15 @@ def cmd_data_pull(args, own=None):
         # The file name is the account that wrote it; that is who it is from.
         data["github"] = name[:-len(".cg.json")]
         texts.append(json.dumps(data, separators=(",", ":")))
-        lines.append("  %s (GitHub: %s): %d prices, scanned %s" % (
+        # Your own file goes along too: the game does not import it, but
+        # shows that you are there.
+        mine = own and data["github"].lower() == own.lower()
+        if not mine:
+            others += 1
+        lines.append("  %s (GitHub: %s): %d prices, scanned %s%s" % (
             data.get("from"), data["github"], len(data.get("items") or {}),
-            time.strftime("%d %b %H:%M", time.localtime(data.get("made", 0)))))
+            time.strftime("%d %b %H:%M", time.localtime(data.get("made", 0))),
+            " (you: shown in game, not imported)" if mine else ""))
     chunks = []
     for text in texts:
         level = 0
@@ -1066,7 +1072,7 @@ def cmd_data_pull(args, own=None):
         "local _, ns = ...\n"
         "ns.SharedFile = {\n%s\n}\n" % "\n".join(chunks), encoding="utf-8")
     if lines:
-        print("Fetched prices from %d other players for \"%s\":" % (len(lines), realm))
+        print("Fetched prices from %d other players for \"%s\":" % (others, realm))
         print("\n".join(lines))
         print("Log in (or /reload): the game lists each of them under Data sources.")
     else:

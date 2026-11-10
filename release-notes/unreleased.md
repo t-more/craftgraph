@@ -48,3 +48,5 @@ when the version is bumped; see [README.md](README.md).
   what others shared there (`data-publish`, `data-pull`, `data-sync`).
 - Graph: faint lights drift along the lines that clearly earn, from the material towards the
   thing made of it. `/cg flow` switches them off.
+- Your own shared prices are never imported (they would repeat your scans as someone else's);
+  instead you are listed first under the players, to show that you are there.

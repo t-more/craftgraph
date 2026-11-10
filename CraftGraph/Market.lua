@@ -507,6 +507,17 @@ M.SHARE_FORMAT, M.SHARE_VERSION = "craftgraph-prices", 1
 local SHARE_LEVELS = 8                 -- price levels sent per item
 local SHARE_MAX_AGE = 7 * 86400        -- older prices are not taken in
 
+-- Is this one of the player's own characters? The one played now, and any
+-- the saved data knows of.
+function M.IsOwnName(name)
+  if type(name) ~= "string" or name == "" then return false end
+  if UnitName and UnitName("player") == name then return true end
+  for key in pairs(ns.db and ns.db.chars or {}) do
+    if tostring(key):match("^(.-) %- ") == name or key == name then return true end
+  end
+  return false
+end
+
 -- Shared prices are kept apart for each player they came from:
 --   ns.realm.sharedBy[name] = { items = { [id] = { t, l, n } }, made, got, github }
 -- "Shared" switches them all; ns.settings.sharedOff[name] switches one off.
@@ -519,6 +530,12 @@ function M.Contributors()
       on = not (ns.settings.sharedOff and ns.settings.sharedOff[name]) }
   end
   table.sort(out, function(a, b) return a.name < b.name end)
+  -- You, when your own prices were seen among the shared ones: listed
+  -- first, to show that you are there, without anything to switch.
+  local me = ns.realm and ns.realm.sharedSelf
+  if me then
+    table.insert(out, 1, { name = me.name, items = me.items, made = me.made, github = me.github, on = false, self = true })
+  end
   return out
 end
 
@@ -681,6 +698,18 @@ function M.Import(text, force)
   if type(data) ~= "table" then return no("That is not CraftGraph data (" .. tostring(problem or "it is not JSON") .. ").") end
   if data.format ~= M.SHARE_FORMAT then return no("That is JSON, but not CraftGraph prices.") end
   if type(data.items) ~= "table" then return no("The data holds no items.") end
+  -- Your own prices are never imported: they would only repeat your scans
+  -- as if someone else had seen them. That they are out there is noted.
+  if M.IsOwnName(data.from) then
+    local count = 0
+    for _ in pairs(data.items) do count = count + 1 end
+    ns.realm.sharedSelf = { name = tostring(data.from), items = count,
+      made = type(data.made) == "number" and data.made or time(),
+      github = type(data.github) == "string" and data.github or nil }
+    ns.Fire("SOURCES")
+    return { ok = false, own = true, text = "These are your own prices (from " .. tostring(data.from)
+      .. "), so they are not imported. " .. count .. " of them are shared." }
+  end
   if data.realm ~= ns.realmKey and not force then
     return { ok = false, otherRealm = true, text = "These prices are for another auction house (" .. tostring(data.realm)
       .. "), not yours (" .. tostring(ns.realmKey) .. "). Press Import again to take them anyway." }
@@ -748,7 +777,11 @@ end
 -- Forgets everything that was shared, or what one player shared.
 function M.ClearShared(name)
   if ns.realm then
-    if name and ns.realm.sharedBy then ns.realm.sharedBy[name] = nil else ns.realm.sharedBy = nil end
+    if name and ns.realm.sharedBy then
+      ns.realm.sharedBy[name] = nil
+    else
+      ns.realm.sharedBy, ns.realm.sharedSelf = nil, nil
+    end
   end
   ns.generation = ns.generation + 1
   ns.Fire("SOURCES")

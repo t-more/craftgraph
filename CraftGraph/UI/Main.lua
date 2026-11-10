@@ -3460,7 +3460,14 @@ local function UpdateSources()
     row.name = c and c.name or nil
     row.check:SetShown(c ~= nil)
     row.label:SetShown(c ~= nil)
-    if c then
+    if c and c.self then
+      -- You: shown to say you are there; your own prices are never imported.
+      row.name = nil
+      row.check:SetChecked(false)
+      row.check:SetEnabled(false)
+      row.label:SetText("|cff66ff66You (" .. c.name .. ")|r" .. GREY .. "  sharing " .. c.items .. (c.items == 1 and " price" or " prices") .. ", scanned "
+        .. ns.Age(time() - (c.made or 0)) .. "; your own are not imported|r")
+    elseif c then
       row.check:SetChecked(c.on)
       row.check:SetEnabled(ns.Market.Source("Shared"))
       row.label:SetText(c.name .. GREY .. "  " .. c.items .. " prices, scanned " .. ns.Age(time() - (c.made or 0))

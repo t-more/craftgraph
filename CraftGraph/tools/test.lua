@@ -2272,6 +2272,8 @@ do
   check(M.ParseJSON('{"a":[1,2.5,-3e2,"x\\"y",true,false,null],"b":{}}').a[4] == 'x"y', "the reader copes with the usual JSON")
   check(M.ParseJSON("{oops") == nil, "and says so when it is not JSON")
 
+  -- From here on the text plays the part of what a friend sent.
+  text = text:gsub('"from":"[^"]*"', '"from":"Friend"')
   -- The friend's side: none of these items scanned here.
   for _, id in ipairs({ a, b }) do ns.realm.items[id] = nil end
   ns.generation = ns.generation + 1
@@ -2357,6 +2359,25 @@ do
   ns.UI.ToggleSources()
   M.ClearShared("Borin")
   check(#M.Contributors() == 1, "one player's prices can be forgotten on their own")
+  -- Your own prices are never imported, but you are shown as being there.
+  do
+    local me = UnitName("player")
+    local mine = from(me, "my-gh", 150, 300)
+    local r = M.Import(mine)
+    check(not r.ok and r.own and r.text:find("your own prices", 1, true), "your own shared prices are refused: " .. r.text)
+    check(M.Info(b).price == 210 and M.Info(b).sharedBy == "Anwen", "and change no price")
+    local list = M.Contributors()
+    check(list[1].self and list[1].name == me and list[1].items == 1 and #list == 2, "you are listed first, as yourself")
+    ns.realm.sharedFilesSeen = nil
+    ns.SharedFile = { mine, from("Anwen", "anwen-gh", 205, 100) }
+    ns.Fire("LOGIN")
+    check(M.Info(b).price == 205 and #M.Contributors() == 2, "a fetched set that includes your own file takes in only the others")
+    ns.UI.ToggleSources()
+    local sf2 = ns.UI.sourcesFrame
+    check(sf2.people[1].label.text:find("You (" .. me .. ")", 1, true) and sf2.people[1].check.enabled == false,
+      "the window shows you without a switch: " .. sf2.people[1].label.text)
+    ns.UI.ToggleSources()
+  end
   M.ClearShared()
   ns.SharedFile = false
   f:Hide()

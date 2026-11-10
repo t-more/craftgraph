@@ -36,6 +36,13 @@ local function PriceLine(id)
   if sd then
     text = text .. GREY .. " \194\177" .. ns.Round(sd * 100) .. "%|r"
   end
+  -- How many sell in a day, in short: "120/d", "1.3k/d", or "120+/d" when
+  -- that is only a floor.
+  if info.turnover then
+    local n = info.turnover
+    local short = n >= 1000 and string.format("%.1fk", n / 1000) or (n >= 10 and tostring(ns.Round(n)) or string.format("%.1f", n))
+    text = text .. " |cff7fbf7f" .. short .. ((info.sales and info.sales.floor) and "+" or "") .. "/d|r"
+  end
   return text
 end
 
@@ -337,6 +344,17 @@ local function FillNode(b, node, isCenter)
   end
 end
 
+-- How much making the item a line leads to earns, from -1 (a loss of a
+-- quarter of its cost or more) through 0 (nothing) to 1 (a gain of a
+-- quarter or more); nil when the prices to tell are missing.
+function V.EdgeLean(e)
+  local product = e.from
+  if not product or not ns.Opt.IsCraftable(product) then return nil end
+  local ev = ns.Opt.Evaluate(product, 1)
+  if not ev.profit or not ev.cost or ev.cost <= 0 then return nil end
+  return max(-1, min(1, ev.profit / ev.cost / 0.25))
+end
+
 ------------------------------------------------------------------------------
 -- View
 ------------------------------------------------------------------------------
@@ -449,9 +467,22 @@ function V.SetGraph(view, graph, refit)
         local x2, y2 = b.x - G.NODE_W / 2, b.y
         local r, g, bl, alpha, thick = 0.62, 0.52, 0.36, 0.55, 1.3
         if e.chosen then
-          r, g, bl, alpha, thick = 1, 0.82, 0, 0.95, 2.2
+          alpha, thick = 0.95, 2.2
         elseif e.cross then
-          r, g, bl, alpha, thick = 0.45, 0.62, 0.9, 0.4, 1.1
+          alpha, thick = 0.4, 1.1
+        end
+        -- The colour says whether turning the material into the thing it
+        -- leads to earns money: gold when it does, grey around nothing, red
+        -- towards a loss. A quarter of the cost either way is full colour.
+        local lean = V.EdgeLean(e)
+        if lean then
+          local to = lean >= 0 and { 1, 0.82, 0 } or { 0.86, 0.30, 0.24 }
+          local k = math.abs(lean)
+          r, g, bl = 0.60 + (to[1] - 0.60) * k, 0.57 + (to[2] - 0.57) * k, 0.52 + (to[3] - 0.52) * k
+        elseif e.chosen then
+          r, g, bl = 1, 0.82, 0
+        elseif e.cross then
+          r, g, bl = 0.45, 0.62, 0.9
         end
         local px, py = x1, y1
         for s = 1, SEGMENTS do
@@ -513,12 +544,13 @@ function V.SetGraph(view, graph, refit)
     end
 
     if refit then
-      local w = (maxX - minX) + G.NODE_W + 60
+      local w = (maxX - minX) + G.NODE_W + 30
       local h = (maxY - minY) + G.NODE_H + 80
       local vw, vh = view:GetWidth(), view:GetHeight()
       local scale = 1
       if vw and vw > 0 and vh and vh > 0 then
-        scale = max(0.55, min(1, vw / w, vh / h))
+        -- Down to half size, so that four columns still fit side by side.
+        scale = max(0.5, min(1, vw / w, vh / h))
       end
       view.scale = scale
       view.ox = -(minX + maxX) / 2 * scale

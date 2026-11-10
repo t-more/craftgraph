@@ -1,0 +1,234 @@
+-- Draws the pictures for the readme and the docs from the simulated market:
+-- stills, frame sequences for GIFs, and a captioned tour. From the addon
+-- folder:  lua5.1 tools/render/scenes.lua <output folder>
+-- then tools/render/make_media.sh turns the SVG frames into PNG, GIF and MP4.
+local World = dofile("tools/render/world.lua")
+local wow, ns = World.wow, World.ns
+local OUT = arg[1] or "media-build"
+local M, J, D = ns.Market, ns.Jobs, ns.Deals
+
+local function find(pred)
+  for _, f in ipairs(wow.frames) do if pred(f) then return f end end
+end
+local function sh(cmd) os.execute(cmd) end
+sh('mkdir -p "' .. OUT .. '/stills"')
+
+local sequences = {}
+-- Adds a frame to a sequence, shown for `seconds`.
+local function frame(seq, opts, seconds)
+  local s = sequences[seq]
+  if not s then
+    s = { n = 0, list = {} }
+    sequences[seq] = s
+    sh('mkdir -p "' .. OUT .. "/" .. seq .. '"')
+  end
+  s.n = s.n + 1
+  local name = string.format("%04d", s.n)
+  wow.svg(OUT .. "/" .. seq .. "/" .. name .. ".svg", opts)
+  s.list[#s.list + 1] = { name, seconds or 0.1 }
+end
+local function still(name, opts) wow.svg(OUT .. "/stills/" .. name .. ".svg", opts) end
+local function tour(caption, seconds) frame("tour", { caption = caption, captionScale = 1.25 }, seconds or 3.5) end
+local function settle() wow.runTimers() end
+local function calm() wow.hover(nil) wow.cursor = nil GameTooltip:Hide() end
+
+-- The auction house is open and a scan is seven minutes old.
+M.ahOpen = true
+ns.Fire("AH_STATE", true)
+ns.settings.showGuesses = false
+ns.settings.sideChart = "history"
+local hero = World.item("Bronze Bar")
+ns.Open(hero) settle()
+local window = CraftGraphFrame
+local side = find(function(f) return f.week and f.chartMode end)
+local trends = find(function(f) return f.options and f.facts end)
+local worth = find(function(f) return f.filters and f.summary end)
+local search = CraftGraphSearchBox
+
+------------------------------------------------------------------------------
+-- 1. The graph and the side panel
+------------------------------------------------------------------------------
+still("overview", { zoom = 1.5 })
+tour("Click any item: what it is made from, what it is used in, and what each step costs", 4.5)
+frame("graph", {}, 1.8)
+for _, name in ipairs({ "Copper Bar", "Copper Ore", "Bronze Bar" }) do
+  ns.UI.Focus(World.item(name)) settle()
+  frame("graph", {}, 1.8)
+end
+
+-- The price box: history with forecast, then the week and the day folded.
+local function boxView(captioned)
+  local v = wow.viewOf(side.week, 8)
+  v[2], v[4] = v[2] - 26, v[4] + 26
+  -- room under the box for a caption, so that it covers nothing
+  if captioned then v[4] = v[4] + 30 end
+  return v
+end
+ns.UI.Focus(hero) settle()
+frame("pictures", { view = boxView(true), zoom = 2, caption = "Price history, with a forecast when it is worth one", captionScale = 1.1 }, 2.4)
+tour("Price history with the certainty drawn as a glow, and suns and moons for the time of day", 4)
+ns.settings.chartFlow = true ns.UI.Refresh() settle()
+frame("pictures", { view = boxView(true), zoom = 2, caption = "Tick Supply: units listed (blue) and sold a day (green)", captionScale = 1.1 }, 2.4)
+still("supply-demand", { view = boxView(), zoom = 2 })
+tour("Tick Supply to see how much was listed and how much sold, beside the price", 4)
+ns.settings.chartFlow = false ns.UI.Refresh() settle()
+ns.settings.sideChart = "week" ns.UI.Refresh() settle()
+side.week.Select(14)
+frame("pictures", { view = boxView(true), zoom = 2, caption = "Every scan folded onto one week", captionScale = 1.1 }, 2.4)
+tour("The same scans folded onto one week: the usual curve, and where next week is heading", 4)
+-- Drag the selector across the week.
+for slot = 2, 166, 3 do
+  side.week.Select(slot)
+  wow.point(side.week.plot, (slot + 0.5) / 168, 0.45)
+  frame("week", { view = boxView(), zoom = 2 }, 0.09)
+  if slot % 24 == 14 then
+    frame("tour", { caption = "Drag across the week to read the price at any time, such as Monday afternoon", captionScale = 1.25 }, 0.5)
+  end
+end
+side.week.Select(14)
+wow.point(side.week.plot, 14.5 / 168, 0.45)
+frame("week", { view = boxView(), zoom = 2 }, 1.5)
+still("week", { view = boxView(), zoom = 2 })
+calm()
+ns.settings.sideChart = "day" ns.UI.Refresh() settle()
+side.week.Select(20)
+frame("pictures", { view = boxView(true), zoom = 2, caption = "... or onto one day", captionScale = 1.1 }, 2.4)
+ns.settings.sideChart = "history" ns.UI.Refresh() settle()
+
+------------------------------------------------------------------------------
+-- 2. Opportunities
+------------------------------------------------------------------------------
+ns.UI.ShowWorth(true) settle()
+still("opportunities", { zoom = 1.5 })
+tour("Opportunities: every way to make money right now, surest first", 4)
+-- The material that most paying crafts need: a good "this item" example.
+local uses, best = {}, nil
+for _, d in ipairs((D.All())) do
+  if d.kind == "craft" then
+    for item in pairs(ns.Opt.Evaluate(d.id, d.qty).plan.buy) do
+      uses[item] = (uses[item] or 0) + 1
+      if not best or uses[item] > uses[best] then best = item end
+    end
+  end
+end
+ns.UI.Focus(best or hero) settle()
+ns.UI.ShowWorth(true) settle()
+worth.filters.item.scripts.OnClick(worth.filters.item)
+tour("\"This item\": everything you could do with one thing if you bought it now", 3.5)
+local row = worth.rows[2] and worth.rows[2].data and worth.rows[2] or worth.rows[1]
+wow.point(row, 0.25, 0.5) wow.hover(row)
+still("this-item", { zoom = 1.5 })
+tour("Hover an option: an example in plain words, and the profit by when it sells", 5)
+calm()
+worth.filters.later.scripts.OnClick(worth.filters.later)
+still("when", { zoom = 1.5 })
+tour("\"When\": what you hold or can make, and the best hour this week to sell it", 4)
+worth.filters.all.scripts.OnClick(worth.filters.all)
+
+------------------------------------------------------------------------------
+-- 3. Trends
+------------------------------------------------------------------------------
+ns.UI.Focus(hero) settle()
+ns.UI.ShowTrends(true) settle()
+trends.options["period:week"].scripts.OnClick()
+trends.barHits[15].scripts.OnMouseDown(trends.barHits[15], "LeftButton")
+still("trends", { zoom = 1.5 })
+tour("Trends: when it is cheap and dear, how fast it sells, and whose auctions sell", 4.5)
+ns.UI.ShowTrends(false)
+
+------------------------------------------------------------------------------
+-- 4. A plan that keeps its numbers up to date
+------------------------------------------------------------------------------
+ns.UI.ShowWorth(true) settle()
+local kinds, planned = {}, 0
+for _, d in ipairs((D.All())) do
+  if d.id and d.kind ~= "bags" and d.sure and not kinds[d.kind] and planned < 3 then
+    kinds[d.kind] = true
+    planned = planned + 1
+    if d.kind == "craft" then J.Pin(d.id, d.qty) else
+      J.Pin(d.id, d.qty, { kind = d.kind, qty = d.qty, outlay = d.outlay, sellEach = d.sellEach, profit = d.profit })
+    end
+  end
+end
+settle()
+ns.UI.UpdateHUD() settle()
+local hud = find(function(f) return f.rows and f.buy and f.mail end)
+tour("Plan it: a small window lists each plan's next step and what it should earn", 4)
+window:Hide()
+local function hudView() return wow.viewOf(hud, 10) end
+frame("plan", { view = hudView(), zoom = 2 }, 1.5)
+for i = 1, 14 do
+  World.scan(0.25)
+  ns.UI.UpdateHUD() settle()
+  frame("plan", { view = hudView(), zoom = 2 }, 0.7)
+end
+wow.point(hud.rows[1], 0.5, 0.5) wow.hover(hud.rows[1])
+local tipView = hudView()
+tipView[1], tipView[3] = tipView[1] - 360, tipView[3] + 360
+tipView[4] = math.max(tipView[4], 470)
+frame("plan", { view = hudView(), zoom = 2 }, 0.2)
+still("plan", { view = hudView(), zoom = 2 })
+still("plan-breakdown", { view = tipView, zoom = 1.6 })
+calm()
+window:Show() settle()
+ns.UI.ShowWorth(false) settle()
+tour("Each new scan updates the plan: profit now, how it moved, its median and average", 4.5)
+
+------------------------------------------------------------------------------
+-- 5. Honest about what it does not know
+------------------------------------------------------------------------------
+J.Clear()
+ns.UI.UpdateHUD() settle()
+local early = World.item("Tin Bar")
+local rec = ns.realm.items[early]
+do
+  local h = M.History(rec)
+  local keep = {}
+  for i = #h - 11, #h do keep[#keep + 1] = h[i] end
+  rec.h, rec.hp, rec.hn = keep, nil, #keep
+  ns.generation = ns.generation + 1
+end
+ns.UI.Focus(early) settle()
+ns.settings.sideChart = "week" ns.UI.Refresh() settle()
+frame("guesses", { view = boxView(true), zoom = 2, caption = "Three scans: no pattern is drawn, and it says why", captionScale = 1.1 }, 2.6)
+tour("With too few scans it shows only what was seen, and says so", 4)
+ns.settings.showGuesses = true
+ns.generation = ns.generation + 1
+ns.UI.Refresh() settle()
+frame("guesses", { view = boxView(true), zoom = 2, caption = "Curious anyway? One switch shows the guess", captionScale = 1.1 }, 2.6)
+ns.settings.showGuesses = false
+ns.generation = ns.generation + 1
+ns.settings.sideChart = "history" ns.UI.Refresh() settle()
+
+ns.UI.ToggleSources() settle()
+still("sources", { view = wow.viewOf(ns.UI.sourcesFrame, 14), zoom = 2 })
+tour("Every extra data source has a switch, so you can see what it changes", 4)
+ns.UI.ToggleSources()
+ns.UI.Focus(hero) settle()
+tour("CraftGraph: /cg in game. Everything here was drawn from simulated data", 4)
+
+-- Frame lists for ffmpeg, and the icons that were missing.
+for name, s in pairs(sequences) do
+  local f = assert(io.open(OUT .. "/" .. name .. "/frames.txt", "w"))
+  for _, item in ipairs(s.list) do
+    f:write("file '" .. item[1] .. ".png'\nduration " .. item[2] .. "\n")
+  end
+  f:write("file '" .. s.list[#s.list][1] .. ".png'\n")
+  f:close()
+  print(name .. ": " .. s.n .. " frames")
+end
+local wanted = {}
+for key in pairs(wow.missingIcons) do wanted[#wanted + 1] = key end
+table.sort(wanted)
+local f = assert(io.open(OUT .. "/icons-wanted.txt", "w"))
+f:write(table.concat(wanted, "\n"), "\n")
+f:close()
+local errors = 0
+for _, line in ipairs(ns.db.log) do
+  if line:find("ERROR") then
+    errors = errors + 1
+    if errors <= 3 then print(line:sub(1, 500)) end
+  end
+end
+print(#wanted .. " icons not on disk; addon errors: " .. errors)
+os.exit(errors == 0 and 0 or 1)

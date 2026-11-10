@@ -56,6 +56,14 @@ What needs what
   Both are described below. Without Python nothing is missing in the game;
   the history is simply coarser once it is older than two days.
 
+Reading the graph
+  Each card shows the cheapest auction price with its margin and, in short,
+  how many sell a day ("120/d"; "120+/d" means at least that many). The
+  lines between cards are gold where making the next thing earns money,
+  grey around nothing and red towards a loss.
+  On the price chart, tick "Supply" to add how many were listed at each scan
+  (blue) and how many sold a day (green).
+
 How fast things sell
   Each full scan lists every auction with its seller and a rough time left.
   CraftGraph compares each full scan with the one before: an auction that

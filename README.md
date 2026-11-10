@@ -1,68 +1,58 @@
 # CraftGraph
 
-A World of Warcraft Forever addon (interface 16001): every way to make money
-at the auction house right now, a crafting graph with buy, make and sell
-buttons, price history with forecasts, and a plan tracker. Open it in game
-with `/cg`. What it does for a player is in `CraftGraph/README.txt`.
+**Make gold at the auction house in World of Warcraft Forever without doing the sums yourself.**
+Open it in game with `/cg`.
 
-## Dependencies
+![A quick tour](docs/media/tour.gif)
 
-The addon needs nothing but the game. The rule for this project: what can be
-done in the game is done in the game, in plain Lua, including the statistics.
-Anything that needs a program outside the game is optional and must leave the
-addon complete without it. Python is used only for what the game cannot do
-(reach the internet, write a database) or for analysis too heavy to run in
-the game; `lua5.1` is needed only to run the offline checks.
+*A one-minute tour ([video](docs/media/tour.mp4)). Every picture here was drawn from the addon's
+own interface code on a simulated market, outside the game.*
 
-## Working on it
+## What you can do with it
 
-    ./test.sh        offline checks with plain Lua 5.1
-    ./install.sh     copy the addon into the game (then /cg reload in game)
-    ./package.sh     build dist/CraftGraph-<version>.zip to share
+**See what anything is made of.** Click an item and you get a map: what it is made from on the
+right, what it is used in on the left, with the price of every step and buttons to buy, make and
+sell.
 
-`windows/` holds the installer that goes into the zip for friends on Windows:
-`Install CraftGraph.cmd` (double-click) starts `install.ps1`. It has not been
-run on a Windows machine yet.
+**Get a list of ways to make money right now.** Craft and sell, buy cheap and relist, buy under
+vendor price, sell what is in your bags. Each line says what it costs, what it should earn and how
+sure that is.
 
-`install.sh --check` shows what would change without changing it. A full game
-restart is only needed when a file is added or `CraftGraph.toc` changes.
+![Opportunities](docs/media/opportunities.png)
 
-## Layout
+**Ask "what would this cost on a Monday afternoon?"** Drag across the week and read the price.
 
-    CraftGraph/            the addon as the game loads it
-      CraftGraph.toc       load order
-      Core.lua             events, saved data, slash commands, logging
-      Market.lua           scans, price ladders, history, auto scan
-      Stats.lua            price model: level, fading trend, hour and weekday habits
-      Optimizer.lua        cheapest way to make things, plans, opportunities, projections
-      Graph.lua            the crafting graph
-      UI/                  window, charts, graph view
-      Data/Recipes.lua     generated recipe and item data
-      Data/Online.lua      empty here; the sync tool writes the real one in the game folder
-      sync/                optional Python tool: scan archive (SQLite) and Blizzard's hourly data
-      tools/               development only, not installed or shipped
-        test.lua           the offline checks
-        backtest.lua       price model against simulated markets
-        backtest_real.lua  price model against the scans really saved
-        stats_v1.lua       the first price model, kept for comparison
-        gen_data.py        regenerates Data/Recipes.lua from wago.tools DB2 exports
+![Dragging across the week](docs/media/week.gif)
 
-## Where things are on this machine
+**Make a plan and watch it.** Press "Plan it" and a small window tells you the next step wherever
+you are. After every scan it shows what the plan should earn now, and whether that went up or down.
 
-- Game addons: `~/.local/share/Steam/steamapps/compatdata/3574889647/pfx/drive_c/Program Files (x86)/World of Warcraft/_forever_/Interface/AddOns/`
-- Saved data and the in-game log: `.../_forever_/WTF/Account/<account>/SavedVariables/CraftGraph.lua`
-- Scan archive: `~/.local/share/craftgraph/market.sqlite`, raw copies in `~/.local/share/craftgraph/raw/`
+![A plan following the market](docs/media/plan.gif)
 
-## Checking the price model
+**Know when to sell.** For anything you hold, it names the best hour this week, if there is one.
 
-    cd CraftGraph
-    lua5.1 tools/backtest.lua . tools/stats_v1.lua 6
-    lua5.1 tools/backtest_real.lua . tools/stats_v1.lua <path to SavedVariables/CraftGraph.lua>
+**Trust it to say "I don't know".** With too few scans, or a price that jumps about, it shows only
+what it saw and tells you why. One switch shows the guess anyway.
 
-`lua5.1 tools/backtest_sales.lua` does the same for the sales estimate in
-`Market.lua` (a simulated item with a known selling rate), and
-`tools/qa_real.lua`, `tools/qa_fit.lua` and `tools/qa_empty.lua` run the whole
-addon on a real saved file, estimate label fit, and exercise an empty install.
+![No guess without enough to go on](docs/media/guesses.gif)
 
-Run both before changing a setting in `Stats.lua`. Where they disagree, trust
-the real scans.
+## Install
+
+1. Download the zip and unzip it.
+2. Windows: double-click **Install CraftGraph**. Anything else: copy the `CraftGraph` folder into
+   `World of Warcraft/_forever_/Interface/AddOns/`.
+3. Start the game, open the auction house, type `/cg` and press **Full scan**.
+
+It needs nothing but the game. [More on installing](docs/start/install.md).
+
+## Want to know more?
+
+Start at the [guide](docs/README.md). It goes from "what do I click" to "how does the maths work",
+one step at a time, and you can stop wherever you like.
+
+| I want to... | Read |
+|---|---|
+| get going | [Your first session](docs/start/first-session.md) |
+| make gold | [Opportunities](docs/play/opportunities.md), [Plans](docs/play/plans.md), [When to sell](docs/play/timing.md) |
+| understand the numbers | [Prices and history](docs/understand/prices-and-history.md), [Forecasts](docs/understand/forecasts.md) |
+| see how it is built | [Under the hood](docs/internals/README.md) |

@@ -128,6 +128,7 @@ local DEFAULTS = {
   cut = 0.05,         -- auction house cut on a sale
   horizonDays = 2,    -- how long a batch may take to sell
   chartDays = 14,     -- how far back the price chart looks; 0 = everything
+  chartFlow = false,  -- draw supply (units listed) and demand (sold a day) on the price chart
   showGuesses = false, -- show forecasts and patterns even where they are only guesses
   srcOnline = true,   -- use Blizzard's hourly data when the sync tool has brought it in
   srcAuctionator = true, -- use Auctionator's prices and history where we have none

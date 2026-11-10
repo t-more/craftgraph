@@ -61,6 +61,7 @@ function C.Create(parent)
   f.yBottom = Label("BOTTOMLEFT", 4, 3)
   f.refLabel = Label("TOPRIGHT", -4, -3, "GameFontNormalSmall")
   f.vendorLabel = Label("BOTTOMRIGHT", -4, 3, "GameFontDisableSmall")
+  f.flowLabel = Label("BOTTOM", 0, 3, "GameFontDisableSmall")
 
   f.xLeft = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   f.xLeft:SetPoint("BOTTOMLEFT", 2, 0)
@@ -412,6 +413,56 @@ function C.Update(f, id, opts)
       dot:SetPoint("CENTER", plot, "BOTTOMLEFT", X(day), Clamp(Y(series[i][2])))
       dot:Show()
     end
+  end
+
+  -- Supply and demand, each on its own scale from nothing to its largest:
+  -- units listed at each scan (blue) and units sold a day between full
+  -- scans (green). They show whether a price move came with goods piling
+  -- up or being bought out.
+  f.flowLabel:SetText("")
+  f.flowLines = 0
+  if opts.flow then
+    local record = ns.Market.Get(id)
+    local h = ns.Market.History(record)
+    local function Curve(points, r, g, b)
+      local top = 0
+      for i = 1, #points do
+        if (points[i][1] - entry.now) / 86400 >= t0 then top = max(top, points[i][2]) end
+      end
+      if top <= 0 then return nil end
+      local lastX, lastY
+      for i = 1, #points do
+        local day = (points[i][1] - entry.now) / 86400
+        if day >= t0 then
+          local x, y = X(day), 4 + points[i][2] / top * (H - 26)
+          if lastX and x - lastX >= 1 then
+            Line(lastX, lastY, x, y, r, g, b, 0.7, 1)
+            f.flowLines = f.flowLines + 1
+          end
+          if not lastX or x - lastX >= 1 then lastX, lastY = x, y end
+        end
+      end
+      return top
+    end
+    local listed, soldPoints = {}, {}
+    for i = 1, #h, 4 do listed[#listed + 1] = { h[i], h[i + 3] } end
+    local sh = record and ns.Market.Source("Sales") and record.sh or {}
+    for i = 1, #sh, 2 do soldPoints[#soldPoints + 1] = { sh[i], sh[i + 1] } end
+    -- The selling rate of a single gap is a few sales over a short time
+    -- and jumps about; the line is its running average over five gaps.
+    local smooth = {}
+    for i = 1, #soldPoints do
+      local sum, count = 0, 0
+      for j = max(1, i - 4), i do sum, count = sum + soldPoints[j][2], count + 1 end
+      smooth[i] = { soldPoints[i][1], sum / count }
+    end
+    local topListed = Curve(listed, 0.45, 0.75, 1)
+    local topSold = Curve(smooth, 0.4, 1, 0.4)
+    local function N(x) return x >= 1000 and string.format("%.1fk", x / 1000) or tostring(ns.Round(x)) end
+    local parts = {}
+    if topListed then parts[#parts + 1] = "|cff73bffflisted max " .. N(topListed) .. "|r" end
+    if topSold then parts[#parts + 1] = "|cff66ff66sold max " .. N(topSold) .. "/d|r" end
+    f.flowLabel:SetText(table.concat(parts, "  "))
   end
 
   f.yTop:SetText(ns.Money(hi))

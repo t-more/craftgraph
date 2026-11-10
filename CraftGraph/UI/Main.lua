@@ -195,7 +195,7 @@ local function CreatePanel(parent)
   Divider()
 
   -- One box, two pictures: the price over time, or the price by time of week.
-  local chartHeader = Button(p, "Price history", 112)
+  local chartHeader = Button(p, "Price history", 100)
   chartHeader:SetHeight(18)
   chartHeader:SetPoint("TOPLEFT", 12, y + 3)
   chartHeader:SetScript("OnClick", function()
@@ -214,9 +214,9 @@ local function CreatePanel(parent)
     local d = ns.settings.chartDays or 14
     return d > 0 and (d .. " days") or "All"
   end
-  p.range = Button(p, RangeText(), 66)
+  p.range = Button(p, RangeText(), 58)
   p.range:SetHeight(18)
-  p.range:SetPoint("LEFT", chartHeader, "RIGHT", 8, 0)
+  p.range:SetPoint("LEFT", chartHeader, "RIGHT", 4, 0)
   p.range:SetScript("OnClick", function(self)
     local current, nextIndex = ns.settings.chartDays or 14, 1
     for i, d in ipairs(RANGES) do
@@ -230,7 +230,22 @@ local function CreatePanel(parent)
     "How far back the chart looks: 14 days, 90 days, or everything recorded for this item.")
   p.certainty = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
   p.certainty:SetSize(22, 22)
-  p.certainty:SetPoint("TOPRIGHT", -84, y + 5)
+  p.certainty:SetPoint("TOPRIGHT", -150, y + 5)
+  -- Supply and demand lines on the same chart.
+  p.flow = CreateFrame("CheckButton", nil, p, "UICheckButtonTemplate")
+  p.flow:SetSize(22, 22)
+  p.flow:SetPoint("TOPRIGHT", -64, y + 5)
+  p.flowLabel = Text(p, "GameFontHighlightSmall")
+  p.flowLabel:SetPoint("LEFT", p.flow, "RIGHT", 2, 0)
+  p.flowLabel:SetText("Supply")
+  p.flow:SetScript("OnClick", function(self)
+    ns.settings.chartFlow = self:GetChecked() and true or false
+    UI.Refresh()
+  end)
+  Tip(p.flow, "Supply and demand",
+    "Adds two lines to the price chart, each on its own scale: how many were listed at each scan "
+    .. "(blue) and how many sold a day between full scans (green). A price that falls while the blue "
+    .. "line climbs is goods piling up; a price that rises while the green line is high is real demand.")
   local label = Text(p, "GameFontHighlightSmall")
   label:SetPoint("LEFT", p.certainty, "RIGHT", 2, 0)
   label:SetText("Certainty")
@@ -459,13 +474,16 @@ local function UpdatePanel()
   p.range:SetShown(not weekPicture)
   p.certainty:SetShown(not weekPicture)
   p.certaintyLabel:SetShown(not weekPicture)
+  p.flow:SetShown(not weekPicture)
+  p.flowLabel:SetShown(not weekPicture)
+  p.flow:SetChecked(ns.settings.chartFlow and true or false)
   chart:SetShown(not weekPicture)
   p.week:SetShown(weekPicture)
   if weekPicture then
     UI.UpdateWeekStrip(p.week, id)
   else
     chart:Update(id, { band = ns.settings.certainty, craft = unitCraft, vendor = ns.VendorSell(id),
-      days = ns.settings.chartDays })
+      days = ns.settings.chartDays, flow = ns.settings.chartFlow })
   end
   local nextStep = ""
   if state.job and state.job.text then

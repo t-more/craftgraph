@@ -1853,6 +1853,35 @@ do
   M.TrackSales(quiet, auctions({ { n = 3, unit = 50, count = 1, band = 3 } }), now)
   local q = M.Sales(quiet)
   check(q and q.units == 0 and q.rate < 6 and q.lo >= 0, string.format("no sales in two hours: a low rate, not none (%.1f a day)", q and q.rate or -1))
+  -- The chart can draw supply and demand lines, by a checkbox in the side panel.
+  do
+    check(M.Get(id).sh and #M.Get(id).sh >= 2 * 8, "the selling rate between scans is kept as a short history")
+    for step = 12, 0, -1 do
+      M.Record(id, { { 100 + step, 100 + step * 10 } }, { full = true, t = now - step * 1800 })
+    end
+    ns.Open(id) RunTimers()
+    local side, chartFrame
+    for _, fr in ipairs(frames) do
+      if fr.week and fr.chartMode then side = fr end
+      if fr.plot and fr.clocks then chartFrame = fr end
+    end
+    check(side.flow and side.flow:GetChecked() == false and (chartFrame.flowLines or 0) == 0, "supply and demand lines are off to start with")
+    side.flow:SetChecked(true)
+    side.flow.scripts.OnClick(side.flow)
+    RunTimers()
+    check(ns.settings.chartFlow == true and chartFrame.flowLines >= 8, "ticking Supply draws them: " .. tostring(chartFrame.flowLines) .. " segments")
+    check(chartFrame.flowLabel.text:find("listed max", 1, true) ~= nil, "with their scales named: " .. chartFrame.flowLabel.text)
+    side.flow:SetChecked(false)
+    side.flow.scripts.OnClick(side.flow)
+    RunTimers()
+    check(chartFrame.flowLines == 0 and chartFrame.flowLabel.text == "", "unticking removes them")
+  end
+  -- A graph card says in short how many sell a day.
+  do
+    local card
+    for _, fr in ipairs(frames) do if fr.node and fr.node.id == id and fr.line1 then card = fr end end
+    check(card and card.line1.text:find("/d", 1, true) ~= nil, "the item's card shows sales a day in short: " .. tostring(card and card.line1.text))
+  end
   -- The source can be switched off.
   ns.Market.Record(id, { { 100, 120 } }, { full = true, t = now })
   local info = M.Info(id)
@@ -1962,6 +1991,39 @@ do
   ns.settings.showGuesses = true
   ns.generation = ns.generation + 1
   for _, id in ipairs({ early, wild, steady }) do ns.realm.items[id] = nil end
+end
+
+------------------------------------------------------------------------------
+-- Graph lines are coloured by whether the step they lead to earns money.
+do
+  local V, O = ns.GraphView, ns.Opt
+  local product, mat
+  for _, row in ipairs((ns.Deals.All())) do
+    if row.kind == "craft" then product = row.id break end
+  end
+  check(product ~= nil, "there is a paying craft to look at")
+  local ev = O.Evaluate(product, 1)
+  local lean = V.EdgeLean({ from = product })
+  check(lean and lean > 0 and near(lean, math.min(1, ev.profit / ev.cost / 0.25), 1e-9), "a paying craft leans to gold: " .. tostring(lean))
+  check(V.EdgeLean({ from = 2770 }) == nil, "a line to something that is not crafted keeps its plain colour")
+  -- Make the product nearly worthless: the lines to it turn towards red.
+  local was = ns.Market.Info(product)
+  ns.Market.Record(product, { { 1, 500 } }, { full = true, t = now + 5 })
+  local losing = V.EdgeLean({ from = product })
+  check(losing and losing < 0, "a craft that loses money leans to red: " .. tostring(losing))
+  ns.Open(product) RunTimers()
+  local reds = 0
+  for _, fr in ipairs(frames) do
+    if fr.lines and fr.canvas then
+      for _, line in ipairs(fr.lines) do reds = reds + 1 end
+    end
+  end
+  check(reds > 0, "the graph draws its lines")
+  if was and was.ladder then
+    local raw = {}
+    for i = 1, #was.ladder, 2 do raw[#raw + 1] = { was.ladder[i], was.ladder[i + 1] } end
+    ns.Market.Record(product, raw, { full = true, t = now + 400 })
+  end
 end
 
 ------------------------------------------------------------------------------

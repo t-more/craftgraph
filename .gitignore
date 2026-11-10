@@ -1,3 +1,5 @@
 dist/
 __pycache__/
 *.pyc
+CraftGraph/tools/render/icons/
+media-build/

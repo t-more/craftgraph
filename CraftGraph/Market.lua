@@ -509,6 +509,7 @@ local SALES_PRIOR_UNITS, SALES_PRIOR_DAYS = 0.5, 0.05
 local CANCEL_BASE, CANCEL_RELISTED = 0.10, 0.95
 local SKIPPED_FACTOR = 0.25           -- cheaper ones were left: probably not bought
 local SELLERS_SOLD_KEPT = 12
+local SALES_HISTORY_KEPT = 160        -- gap-by-gap selling rates kept per item
 local bandInfo = {}
 
 -- The least and most seconds an auction in a time-left band has left.
@@ -674,6 +675,14 @@ function M.TrackSales(id, auctions, now)
   -- Belief about the rate: units and days of evidence, older evidence fading.
   local days = gap / 86400
   local fade = 0.5 ^ (days / SALES_HALFLIFE)
+  -- A short history of the rate itself, for the chart: time, units a day.
+  local sh = it.sh or {}
+  sh[#sh + 1], sh[#sh + 2] = now, floor(sold / days + 0.5)
+  while #sh > 2 * SALES_HISTORY_KEPT do
+    table.remove(sh, 1)
+    table.remove(sh, 1)
+  end
+  it.sh = sh
   it.sa = (it.sa or 0) * fade + sold               -- units
   it.sn = (it.sn or 0) * fade + soldStacks         -- auctions: the events that are counted
   it.sb = (it.sb or 0) * fade + days

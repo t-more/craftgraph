@@ -2083,3 +2083,76 @@ function D.Timing()
   end)
   return rows, leftOut
 end
+
+
+------------------------------------------------------------------------------
+-- Ranking what to make
+--
+-- To compare the things on screen each craftable one gets a score, and the
+-- best of them is the recommendation. Two ways to score, the player's
+-- choice:
+--   per craft   what one craft earns
+--   in all      what the whole amount earns that could be made now
+-- Either is taken cautiously: the estimate less its margin (one standard
+-- deviation, so the true figure is above it about five times in six). A
+-- craft that looks good only because its prices are unsure scores low.
+--
+-- "The amount that could be made now" runs from what the player's own
+-- stock covers to the best quantity the market allows (which already minds
+-- how much is listed and how much sells). settings.buyRatio says how far
+-- along that the player is willing to go by buying at auction: 0 = only
+-- own stock, 1 = buy whatever it takes.
+--
+-- Groups: "ready" (own stock covers at least one craft), "buy" (materials
+-- must be bought first), "unknown" (the recipe is not known).
+------------------------------------------------------------------------------
+local rankCache, rankKey
+
+function O.Rank(id)
+  local ratio = max(0, min(1, ns.settings and ns.settings.buyRatio or 1))
+  local by = ns.settings and ns.settings.rankBy or "total"
+  local key = ns.generation .. ":" .. P.version .. ":" .. ratio .. ":" .. by
+  if rankKey ~= key then rankCache, rankKey = {}, key end
+  local hit = rankCache[id]
+  if hit ~= nil then return hit or nil end
+  local out = false
+  if O.IsCraftable(id) then
+    local spell = O.BestRecipe(id)
+    local r = O.Recipe(spell)
+    local one = O.Evaluate(id, 1)
+    if r and one.profit then
+      local yield = max(1, r[4] or 1)
+      -- Crafts the player's own stock (bags and bank) covers.
+      local ownCasts = math.huge
+      for i = 1, #r[7], 2 do
+        local have = P.ItemCount(r[7][i]) + P.BankCount(r[7][i])
+        ownCasts = min(ownCasts, math.floor(have / r[7][i + 1]))
+      end
+      if ownCasts == math.huge then ownCasts = 0 end
+      local ownUnits = ownCasts * yield
+      local bestQty = O.BestQuantity(id)
+      local reach = max(bestQty or 0, ownUnits)
+      local qty = ownUnits + ratio * (reach - ownUnits)
+      -- Whole crafts only; anything above nothing is at least one craft.
+      qty = (qty > 0) and max(1, math.floor(qty / yield + 0.5)) * yield or 0
+      local total, totalSd, buyCost = 0, 0, 0
+      if qty > 0 then
+        local e = O.Evaluate(id, qty)
+        total, totalSd = e.profit or 0, e.sd or 0
+        for _, c in pairs(e.plan.buyCost or {}) do buyCost = buyCost + c end
+      end
+      local known = P.Knows(spell)
+      out = {
+        perCraft = one.profit, sdCraft = one.sd or 0, safeCraft = one.profit - (one.sd or 0),
+        own = ownUnits, best = reach, qty = qty, total = total, totalSd = totalSd, safeTotal = total - totalSd,
+        buyCost = buyCost, known = known, yield = yield,
+        group = (not known) and "unknown" or (ownCasts >= 1 and "ready" or "buy"),
+      }
+      out.score = max(0, by == "craft" and out.safeCraft or out.safeTotal)
+    end
+  end
+  rankCache[id] = out
+  return out or nil
+end
+
+O.RANK_GROUPS = { ready = 1, buy = 2, unknown = 3 }

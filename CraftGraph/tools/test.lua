@@ -2546,6 +2546,113 @@ do
 end
 
 ------------------------------------------------------------------------------
+-- Ranking what to make: score, groups, the golden halo, the buy slider.
+do
+  local O, P, V = ns.Opt, ns.Player, ns.GraphView
+  ns.settings.buyRatio, ns.settings.rankBy = 1, "total"
+  local product, mat
+  for _, row in ipairs((ns.Deals.All())) do
+    local one = row.kind == "craft" and O.Evaluate(row.id, 1)
+    if one and one.profit and one.profit > 0 then
+      product, mat = row.id, nil
+      for item in pairs(O.Evaluate(row.id, row.qty).plan.buy) do mat = item break end
+      if mat then break end
+    end
+  end
+  check(product and mat, "there is a craft that pays per craft, with a material to buy")
+  local oldCount, oldBank = P.ItemCount, P.BankCount
+  P.ItemCount, P.BankCount = function() return 0 end, function() return 0 end
+  P.version = P.version + 1
+  local rank = O.Rank(product)
+  check(rank and rank.perCraft > 0 and rank.safeCraft <= rank.perCraft and rank.safeTotal <= rank.total,
+    "a craft is scored cautiously: the estimate less its margin")
+  check(rank.group == "buy" and rank.own == 0 and rank.qty >= rank.best and rank.qty % rank.yield == 0 and rank.qty > 0 and rank.buyCost > 0,
+    "with nothing in the bags it needs buying, and at 100% the best amount is planned (" .. rank.qty .. ")")
+  check(O.Rank(2770) == nil, "a raw material has no rank")
+  -- Own stock for exactly three crafts.
+  local r = O.Recipe(O.BestRecipe(product))
+  local need = {}
+  for i = 1, #r[7], 2 do need[r[7][i]] = r[7][i + 1] * 3 end
+  P.ItemCount = function(id) return need[id] or 0 end
+  P.version = P.version + 1
+  local ready = O.Rank(product)
+  check(ready.group == "ready" and ready.own == 3 * ready.yield, "with materials for three crafts it is ready: makes " .. ready.own)
+  ns.settings.buyRatio = 0
+  local own = O.Rank(product)
+  check(own.qty == own.own and own.buyCost >= 0 and own.total <= ready.total + 1,
+    "at 0% only what the bags cover is counted (" .. own.qty .. ")")
+  ns.settings.buyRatio = 0.5
+  local half = O.Rank(product)
+  check(half.qty >= own.qty and half.qty <= math.max(ready.best, own.own), "at 50% the amount lies between the two (" .. half.qty .. ")")
+  ns.settings.rankBy = "craft"
+  check(O.Rank(product).score == math.max(0, O.Rank(product).safeCraft), "ranked per craft, the score is the cautious profit of one craft")
+  ns.settings.rankBy, ns.settings.buyRatio = "total", 1
+  check(O.Rank(product).score == math.max(0, O.Rank(product).safeTotal), "ranked in all, the cautious profit of the whole amount")
+
+  -- The graph: ready things first, then what needs buying, then unknown recipes; the best is the most golden.
+  local graph = ns.Graph.Build(mat, {})
+  local order, lastGroup, sorted = {}, 0, true
+  local lastScore = math.huge
+  for _, n in ipairs(graph.nodes) do
+    if n.id and n.side == -1 and n.layer == 1 then
+      local rk = O.Rank(n.id)
+      local g = rk and O.RANK_GROUPS[rk.group] or 4
+      if g < lastGroup then sorted = false end
+      if g == lastGroup and rk and rk.score > lastScore + 1e-6 then sorted = false end
+      lastGroup, lastScore = g, rk and rk.score or -1
+      order[#order + 1] = n.id
+    end
+  end
+  check(#order >= 1 and sorted, "the things made from it are grouped and then sorted by score (" .. #order .. ")")
+  ns.Open(mat) RunTimers()
+  local gv
+  for _, fr in ipairs(frames) do if fr.lines and fr.canvas and fr.slider then gv = fr end end
+  local top, golds, ok = gv.topCard, 0, true
+  for _, fr in ipairs(frames) do
+    if fr.node and fr.shown and fr.gild and fr.rank then
+      if fr.gold > 1 + 1e-9 or fr.gold < 0 then ok = false end
+      if fr.gold > 0 then golds = golds + 1 end
+    end
+  end
+  check(top and near(top.gold, 1) and ok and golds >= 1, "the best card on screen is the most golden (" .. golds .. " gilded)")
+  local before = top.gild.alpha
+  clock = clock + 0.7
+  gv.scripts.OnUpdate(gv, 0.7)
+  check(top.gild.alpha ~= before and top.gild.alpha >= 0.45 and top.gild.alpha <= 0.9, "its halo breathes: " .. tostring(top.gild.alpha))
+  -- The slider and the rank button.
+  check(gv.sliderValue.text:find("100%", 1, true) ~= nil and gv.rankButton.text == "Rank: in all", "the controls show the setting: " .. gv.sliderValue.text)
+  gv.SetRatio(0.52)
+  check(ns.settings.buyRatio == 0.5 and gv.sliderValue.text:find("50%", 1, true) ~= nil, "the slider moves in steps: " .. gv.sliderValue.text)
+  gv.SetRatio(0)
+  check(gv.sliderValue.text:find("own stock only", 1, true) ~= nil, "at nothing it says own stock only")
+  gv.rankButton.scripts.OnClick(gv.rankButton) RunTimers()
+  check(ns.settings.rankBy == "craft" and gv.rankButton.text == "Rank: per craft", "the button switches to per craft")
+  gv.rankButton.scripts.OnClick(gv.rankButton) RunTimers()
+  gv.SetRatio(1)
+  for _, fr in ipairs(frames) do
+    if fr.node and fr.shown and fr.scripts.OnEnter and fr.rank then fr.scripts.OnEnter(fr) fr.scripts.OnLeave(fr) end
+  end
+  -- A recipe that is not known is greyed but still ranked among its like.
+  local oldKnows = P.Knows
+  P.Knows = function() return false end
+  P.version = P.version + 1
+  local unknown = O.Rank(product)
+  check(unknown.group == "unknown" and unknown.score >= 0, "a recipe you do not know is in a group of its own, still scored")
+  ns.UI.Refresh() RunTimers()
+  local greyed = false
+  for _, fr in ipairs(frames) do
+    if fr.node and fr.shown and fr.rank and fr.rank.group == "unknown" and fr.greyed then greyed = true end
+  end
+  check(greyed, "and its card is greyed")
+  P.Knows, P.ItemCount, P.BankCount = oldKnows, oldCount, oldBank
+  P.version = P.version + 1
+  ns.UI.Refresh() RunTimers()
+  local errors = 0
+  for _, line in ipairs(ns.db.log) do if line:find("ERROR") then errors = errors + 1 print(line) end end
+  check(errors == 0, "no errors in the ranking")
+end
+
+------------------------------------------------------------------------------
 -- The chart's row of sun and moon icons
 do
   local f = ns.Chart.Create(UIParent)

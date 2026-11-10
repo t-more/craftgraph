@@ -27,6 +27,24 @@ the lights off).
 Lines are **thicker** towards the things that earn the most among those on screen, and each
 line carries what one craft of the thing it leads to earns, such as `+35c/craft`.
 
+## What to make: the golden rim
+Every craftable card is scored and the scores are compared across what is on screen. The more
+golden a card's rim, the better it is to make; the best one breathes.
+
+![The golden rim and the buy slider](../media/rank.gif)
+
+- **Groups.** Things made from the item in the middle are listed in three groups: what you can
+  make now from your bags and bank (`make 18 now`), what needs materials bought first
+  (`buy, make 20`), and recipes you do not know (greyed). Within each group the best score is
+  first.
+- **Rank: in all / per craft.** The button at the top switches between what the whole amount you
+  could make now earns, and what one craft earns.
+- **Buy at auction.** The slider says how far you are willing to go beyond what you own: at
+  nothing, cards are ranked by what your own stock can make; at 100%, by the best amount the
+  market allows. Drag, click or scroll it.
+- **Cautious on purpose.** A score is the estimate less its margin, so a craft that only looks
+  good because its prices are unsure does not win. Hover a card for the numbers behind its rank.
+
 **Moving around:** click a card to centre it, drag to pan, mouse wheel to zoom. The mouse's back
 and forward buttons go back and forward.
 

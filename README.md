@@ -13,7 +13,7 @@ own interface code on a simulated market, outside the game.*
 **See what anything is made of.** Click an item and you get a map: what it is made from on the
 right, what it is used in on the left, with the price of every step and buttons to buy, make and
 sell. Gold lines earn, red ones lose, thicker ones earn more, and small lights drift the way
-the money flows.
+the money flows. The card with the golden rim is the best thing to make right now.
 
 ![The graph, with lights drifting where the money flows](docs/media/flow.gif)
 

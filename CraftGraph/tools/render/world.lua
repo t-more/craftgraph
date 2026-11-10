@@ -45,7 +45,8 @@ table.sort(skillIds)
 GetProfessions = nil
 GetNumSkillLines = function() return #skillIds end
 GetSkillLineInfo = function(i) return ns.Data.skills[skillIds[i]], false, nil, 150 end
-C_TradeSkillUI = { GetRecipeInfo = function() return { learned = true } end }
+-- Most recipes are known; a few are not, to show how those look.
+C_TradeSkillUI = { GetRecipeInfo = function(spell) return { learned = spell % 5 ~= 0 } end }
 local skillSet = {}
 for _, id in ipairs(skillIds) do skillSet[id] = true end
 
@@ -213,6 +214,9 @@ for _, id in ipairs(ids) do
     bank[id] = 20 + math.floor(rnd() * 60)
   end
 end
+-- Some bars in the bags, so that a few things can be made on the spot.
+inventory[2841], inventory[2840], inventory[3576] = 48, 30, 26      -- bronze, copper, tin bars
+bank[2841] = 60
 World.inventory, World.bank = inventory, bank
 ns.Player.version = ns.Player.version + 1
 

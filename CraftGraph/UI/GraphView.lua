@@ -140,6 +140,33 @@ local function ShowTooltip(button)
     GameTooltip:AddDoubleLine("Recipe",
       (ns.Data.skills[r[1]] or "?") .. " " .. r[2] .. ": " .. r[6], 1, 0.82, 0, 1, 1, 1)
   end
+  -- How it ranks among the things on screen, and why.
+  local rank = ns.Opt.Rank(id)
+  if rank then
+    local function Sure(value, sd)
+      return ns.Money(value) .. " \194\177" .. ns.Money(sd) .. GREY .. " (at least " .. ns.Money(value - sd) .. ")|r"
+    end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(rank.group == "ready" and "You can make this now" or rank.group == "buy" and "Needs materials bought first"
+      or "You do not know this recipe", 1, 0.82, 0)
+    GameTooltip:AddDoubleLine("One craft earns", Sure(rank.perCraft, rank.sdCraft), 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine("From what you own", rank.own > 0 and ("makes " .. ns.Round(rank.own)) or "none", 1, 1, 1, 1, 1, 1)
+    GameTooltip:AddDoubleLine("Most worth making", ns.Round(rank.best), 1, 1, 1, 1, 1, 1)
+    if rank.qty > 0 then
+      local pct = ns.Round((ns.settings.buyRatio or 1) * 100)
+      GameTooltip:AddDoubleLine("At your setting (" .. pct .. "% bought)", "make " .. ns.Round(rank.qty), 1, 1, 1, 1, 1, 1)
+      GameTooltip:AddDoubleLine("That earns", Sure(rank.total, rank.totalSd), 1, 1, 1, 1, 1, 1)
+      if rank.buyCost > 0 then
+        GameTooltip:AddDoubleLine("To buy at auction", ns.Money(rank.buyCost), 1, 1, 1, 1, 1, 1)
+      end
+    end
+    local view = button:GetParent() and button:GetParent():GetParent()
+    local top = view and view.topScore or 0
+    if top > 0 and rank.group ~= "unknown" then
+      GameTooltip:AddLine("Ranked " .. ((ns.settings.rankBy == "craft") and "per craft" or "in all") .. ": "
+        .. ns.Round(100 * rank.score / top) .. "% of the best on screen.", 0.8, 0.8, 0.8)
+    end
+  end
   GameTooltip:AddLine("Click to centre the graph here.", 0.6, 0.6, 0.6)
   GameTooltip:AddLine("Shift-click to link in chat.", 0.6, 0.6, 0.6)
   GameTooltip:Show()
@@ -184,6 +211,32 @@ local function CreateNode(canvas)
   b.bigLine:SetJustifyH("LEFT")
   b.bigLine:SetWordWrap(false)
   b.bigLine:Hide()
+  -- A golden halo: the stronger, the better this is to make among the
+  -- things on screen. The best one's halo breathes.
+  -- Four strips around the card, so that the halo never covers its text.
+  b.gild = { strips = {} }
+  for i, edge in ipairs({
+    { "BOTTOMLEFT", "TOPLEFT", -5, 0, "BOTTOMRIGHT", "TOPRIGHT", 5, 0, 5, true },      -- above
+    { "TOPLEFT", "BOTTOMLEFT", -5, 0, "TOPRIGHT", "BOTTOMRIGHT", 5, 0, 5, true },      -- below
+    { "TOPRIGHT", "TOPLEFT", 0, 0, "BOTTOMRIGHT", "BOTTOMLEFT", 0, 0, 5, false },      -- left
+    { "TOPLEFT", "TOPRIGHT", 0, 0, "BOTTOMLEFT", "BOTTOMRIGHT", 0, 0, 5, false },      -- right
+  }) do
+    local strip = b:CreateTexture(nil, "BACKGROUND")
+    strip:SetPoint(edge[1], b, edge[2], edge[3], edge[4])
+    strip:SetPoint(edge[5], b, edge[6], edge[7], edge[8])
+    if edge[10] then strip:SetHeight(edge[9]) else strip:SetWidth(edge[9]) end
+    strip:SetColorTexture(1, 0.82, 0, 0)
+    b.gild.strips[i] = strip
+  end
+  function b.gild:SetColorTexture(r, g, bl, a)
+    self.alpha = a
+    for _, strip in ipairs(self.strips) do strip:SetColorTexture(r, g, bl, a) end
+  end
+  -- Whether it can be made now, needs buying first, or is not known.
+  b.tag = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.tag:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -7, 10)
+  b.tag:SetJustifyH("RIGHT")
+  b.tag:Hide()
 
   -- Three lines: auction, vendor, make. Each can carry its own button at
   -- the right end: buy or sell at auction, buy from a vendor, craft.
@@ -360,6 +413,29 @@ local function FillNode(b, node, isCenter)
   end
 end
 
+-- Marks a card by how good it is to make: the halo's strength is its score
+-- against the best on screen; recipes the player does not know are greyed.
+local function Gild(b, rank, top, compact)
+  local gold = (rank and top > 0) and min(1, rank.score / top) or 0
+  b.gold = gold
+  b.rank = rank
+  b.gild:SetColorTexture(1, 0.82, 0, gold > 0.12 and (0.10 + 0.55 * gold * gold) or 0)
+  b.greyed = (rank and rank.group == "unknown") or false
+  b:SetAlpha(b.greyed and 0.55 or 1)
+  local tag
+  if rank and compact then
+    if rank.group == "ready" then
+      tag = "|cff40ff40make " .. ns.Round(rank.own) .. " now|r"
+    elseif rank.group == "buy" then
+      tag = rank.qty > 0 and ("|cffffd100buy, make " .. ns.Round(rank.qty) .. "|r") or (GREY .. "buy first|r")
+    else
+      tag = GREY .. "recipe not known|r"
+    end
+  end
+  b.tag:SetText(tag or "")
+  b.tag:SetShown(tag ~= nil)
+end
+
 -- Below this zoom the cards show less, larger.
 V.DENSE_BELOW = 0.75
 
@@ -453,6 +529,95 @@ function V.Create(parent)
   end
   Header("TOPLEFT", 12, "Used in")
   Header("TOPRIGHT", -12, "Made from")
+  -- How the cards are ranked, and how much may be bought at auction.
+  local rankButton = CreateFrame("Button", nil, view, "UIPanelButtonTemplate")
+  rankButton:SetSize(128, 19)
+  rankButton:SetPoint("TOP", -150, -5)
+  rankButton:SetScript("OnClick", function()
+    ns.settings.rankBy = (ns.settings.rankBy == "craft") and "total" or "craft"
+    if ns.UI and ns.UI.Refresh then ns.UI.Refresh() end
+  end)
+  rankButton:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:SetText("How the cards are ranked")
+    GameTooltip:AddLine("The more golden a card's halo, the better it is to make among the things on screen; the "
+      .. "best one breathes. \"In all\" ranks by what the whole amount you could make now earns; \"per "
+      .. "craft\" by what one craft earns. Both are counted cautiously: the estimate less its margin. "
+      .. "Things you can make now come first, then what needs buying, then recipes you do not know (greyed).",
+      1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  rankButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  view.rankButton = rankButton
+
+  local slider = CreateFrame("Button", nil, view)
+  slider:SetSize(120, 16)
+  slider:SetPoint("LEFT", rankButton, "RIGHT", 96, 0)
+  local caption = view:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  caption:SetPoint("RIGHT", slider, "LEFT", -6, 0)
+  caption:SetText("Buy at auction:")
+  local track = slider:CreateTexture(nil, "BACKGROUND")
+  track:SetPoint("LEFT", 0, 0)
+  track:SetPoint("RIGHT", 0, 0)
+  track:SetHeight(4)
+  track:SetColorTexture(1, 1, 1, 0.18)
+  local fill = slider:CreateTexture(nil, "BORDER")
+  fill:SetPoint("LEFT", 0, 0)
+  fill:SetHeight(4)
+  fill:SetColorTexture(1, 0.82, 0, 0.8)
+  local thumb = slider:CreateTexture(nil, "ARTWORK")
+  thumb:SetSize(8, 14)
+  thumb:SetColorTexture(1, 0.9, 0.5, 1)
+  local value = view:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  value:SetPoint("LEFT", slider, "RIGHT", 6, 0)
+  view.slider, view.sliderValue = slider, value
+  function view.ShowRatio()
+    local ratio = max(0, min(1, ns.settings.buyRatio or 1))
+    local w = 120
+    fill:SetWidth(max(0.5, w * ratio))
+    thumb:ClearAllPoints()
+    thumb:SetPoint("CENTER", slider, "LEFT", w * ratio, 0)
+    value:SetText(ratio <= 0 and "nothing: own stock only" or (ns.Round(ratio * 100) .. "% of what it takes"))
+    rankButton:SetText((ns.settings.rankBy == "craft") and "Rank: per craft" or "Rank: in all")
+  end
+  -- Sets the ratio (0 to 1, in steps of a twentieth) and ranks again.
+  function view.SetRatio(ratio)
+    ratio = max(0, min(1, math.floor(ratio * 20 + 0.5) / 20))
+    if ratio == ns.settings.buyRatio then return end
+    ns.settings.buyRatio = ratio
+    view.ShowRatio()
+    if ns.UI and ns.UI.Refresh then ns.UI.Refresh() end
+  end
+  local function FromCursor()
+    local left, scale = slider:GetLeft(), slider:GetEffectiveScale()
+    if not left or not scale or scale == 0 then return nil end
+    return (GetCursorPosition() / scale - left) / 120
+  end
+  slider:SetScript("OnMouseDown", function()
+    slider.dragging = true
+    local r = FromCursor()
+    if r then view.SetRatio(r) end
+  end)
+  slider:SetScript("OnMouseUp", function() slider.dragging = false end)
+  slider:SetScript("OnHide", function() slider.dragging = false end)
+  slider:SetScript("OnUpdate", function()
+    if not slider.dragging then return end
+    if not IsMouseButtonDown("LeftButton") then slider.dragging = false return end
+    local r = FromCursor()
+    if r then view.SetRatio(r) end
+  end)
+  slider:EnableMouseWheel(true)
+  slider:SetScript("OnMouseWheel", function(_, delta) view.SetRatio((ns.settings.buyRatio or 1) + delta * 0.05) end)
+  slider:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:SetText("How much to buy at auction")
+    GameTooltip:AddLine("How far you are willing to go beyond what you already own. At nothing, cards are "
+      .. "ranked by what your own bags and bank can make. At 100%, by the best amount the market allows, "
+      .. "buying whatever it takes. Drag, click or scroll.", 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  slider:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
   local hint = view:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   hint:SetPoint("BOTTOMLEFT", 10, 8)
   hint:SetText("Click an item to centre it. Drag to move, mouse wheel to zoom.")
@@ -525,6 +690,7 @@ function V.SetGraph(view, graph, refit)
   local canvas = view.canvas
   local nNode, nLine, nLabel = 0, 0, 0
   view.graph = graph
+  if view.ShowRatio then view.ShowRatio() end
   -- Zoomed out, cards and line labels carry less, so that they can be read.
   local compact = view.scale < V.DENSE_BELOW
   view.compact = compact
@@ -534,6 +700,19 @@ function V.SetGraph(view, graph, refit)
   if graph then
     -- Lines first (they sit under the item panels).
     local stacked, earned = {}, {}
+    -- Every craftable thing on screen is scored; the best sets the scale.
+    local ranks, topScore = {}, 0
+    view.topCard = nil
+    for _, node in ipairs(graph.nodes) do
+      if node.id then
+        local rank = ns.Opt.Rank(node.id)
+        if rank then
+          ranks[node.id] = rank
+          if rank.group ~= "unknown" then topScore = max(topScore, rank.score) end
+        end
+      end
+    end
+    view.ranks, view.topScore = ranks, topScore
     -- How much each thing on screen earns at its best quantity, against
     -- the best of them: lines towards the bigger earners are drawn thicker.
     local gains, topGain = {}, 0
@@ -653,6 +832,10 @@ function V.SetGraph(view, graph, refit)
       end
       FillNode(b, node, node.id == graph.center)
       Dense(b, compact)
+      Gild(b, node.id and ranks[node.id] or nil, topScore, compact)
+      if node.id and ranks[node.id] and ranks[node.id].score > 0 and ranks[node.id].score == topScore then
+        view.topCard = b
+      end
       b:ClearAllPoints()
       b:SetPoint("CENTER", canvas, "CENTER", node.x, node.y)
       b:Show()
@@ -697,6 +880,12 @@ end
 -- on purpose. Called every frame the graph is shown.
 local FLOW_SECONDS = 2.8
 function V.Animate(view)
+  -- The best thing to make: its halo breathes.
+  local best = view.topCard
+  if best and best.gild and (best.gold or 0) > 0 then
+    local breath = 0.5 + 0.5 * math.sin(GetTime() * 2.2)
+    best.gild:SetColorTexture(1, 0.82, 0, 0.45 + 0.45 * breath)
+  end
   local flows = view.flows or {}
   view.pulses = view.pulses or {}
   local now = GetTime()

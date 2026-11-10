@@ -19,10 +19,20 @@ local function ProfitScore(id)
   return e.profit
 end
 
+-- What can be made now first, then what needs buying, then recipes not
+-- known; within each, the best score first (see Optimizer: Rank).
 local function RankByProfit(list)
-  local score = {}
-  for _, c in ipairs(list) do score[c.id] = ProfitScore(c.id) end
+  local score, group = {}, {}
+  for _, c in ipairs(list) do
+    local rank = ns.Opt.Rank and ns.Opt.Rank(c.id)
+    if rank then
+      score[c.id], group[c.id] = rank.score, ns.Opt.RANK_GROUPS[rank.group]
+    else
+      score[c.id], group[c.id] = ProfitScore(c.id), 4
+    end
+  end
   table.sort(list, function(a, b)
+    if group[a.id] ~= group[b.id] then return group[a.id] < group[b.id] end
     local sa, sb = score[a.id], score[b.id]
     if sa and sb then
       if sa ~= sb then return sa > sb end

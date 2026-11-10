@@ -69,6 +69,27 @@ do
   tour("Gold lines earn, red ones lose; small lights drift the way the money flows", 4)
 end
 
+-- What to make: the golden halo, and the slider for how much to buy.
+do
+  ns.UI.Focus(hero) settle()
+  local graphView = find(function(f) return f.canvas and f.flows and f.slider end)
+  local area = wow.viewOf(graphView, 4)
+  still("rank", { view = area, zoom = 1.5 })
+  tour("The most golden card is the best thing to make now; greyed ones need a recipe you lack", 4.5)
+  for _, step in ipairs({ { 1, "Buying whatever it takes: ranked by the best amount the market allows" },
+      { 0.5, "Willing to buy half of that" }, { 0, "Only what is in your bags and bank" },
+      { 1, "Drag the slider: the ranking follows" } }) do
+    graphView.SetRatio(step[1]) settle()
+    wow.point(graphView.slider, step[1], 0.5)
+    for _ = 1, 8 do
+      wow.clock = wow.clock + 0.2
+      graphView.scripts.OnUpdate(graphView, 0.2)
+      frame("rank", { view = area, zoom = 1.3, caption = step[2], captionScale = 1.0 }, 0.2)
+    end
+  end
+  calm()
+end
+
 -- The price box: history with forecast, then the week and the day folded.
 local function boxView(captioned)
   local v = wow.viewOf(side.week, 8)

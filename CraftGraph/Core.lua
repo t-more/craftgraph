@@ -128,6 +128,8 @@ local DEFAULTS = {
   cut = 0.05,         -- auction house cut on a sale
   horizonDays = 2,    -- how long a batch may take to sell
   chartDays = 14,     -- how far back the price chart looks; 0 = everything
+  buyRatio = 1,       -- how much of what a craft needs may be bought at auction: 0 = only own stock
+  rankBy = "total",   -- rank graph cards by profit "total" (in all) or per "craft"
   flowGlow = true,    -- small lights drift along graph lines towards where money is made
   chartGrid = true,   -- a grid with prices on the price chart, to read sizes off
   chartBars = false,  -- small bars for how much the price moved from period to period

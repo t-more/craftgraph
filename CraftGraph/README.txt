@@ -70,6 +70,17 @@ Reading the graph
   over, from 15 minutes to a day; "auto" lets the chart choose.
   /cg version shows which version you have.
 
+What to make
+  On the graph the more golden a card's rim, the better it is to make among
+  the things on screen; the best one breathes. Things made from the item in
+  the middle come in three groups: what your bags and bank can make now,
+  what needs buying first, and recipes you do not know (greyed), each
+  sorted best first. "Rank" switches between what the whole amount earns
+  and what one craft earns, both counted cautiously (the estimate less its
+  margin). The "Buy at auction" slider sets how far beyond your own stock
+  to go: nothing = only what you own, 100% = the best amount the market
+  allows.
+
 How fast things sell
   Each full scan lists every auction with its seller and a rough time left.
   CraftGraph compares each full scan with the one before: an auction that

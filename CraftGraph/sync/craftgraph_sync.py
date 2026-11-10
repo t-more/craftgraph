@@ -71,6 +71,11 @@ def load_config():
 
 
 def save_config(cfg):
+    # The API key is personal. It must never sit where the addon is: that
+    # folder is zipped, shared and published.
+    if ADDON_DIR in CONFIG_DIR.resolve().parents or CONFIG_DIR.resolve() == ADDON_DIR:
+        sys.exit("Refusing to keep the API key inside the addon folder (%s). Unset XDG_CONFIG_HOME "
+                 "or point it somewhere private." % CONFIG_DIR)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
     try:
@@ -621,8 +626,44 @@ def write_online(db, house, name, realm, items):
 # ----------------------------------------------------------------------------
 # Commands
 # ----------------------------------------------------------------------------
+API_TERMS_URL = "https://www.blizzard.com/en-us/legal/a2989b50-5f16-43b1-abec-2ae17cc09dd6/blizzard-developer-api-terms-of-use"
+
+LEGAL_NOTES = """
+CraftGraph is a prototype made by a few friends, given as it is, with no warranty.
+How you use it is your own decision and your own responsibility.
+It is not affiliated with or endorsed by Blizzard.
+
+The hourly prices need an API key that YOU make at Blizzard under YOUR account.
+Making it means you accept Blizzard's Developer API Terms of Use yourself:
+  %s
+The authors of CraftGraph are not a party to that and do not answer for your use.
+The main points, in short (the terms themselves are what counts):
+  - The key is yours alone: keep it secret, never share it. You answer for its use.
+    It is stored in one private file on this computer and nowhere else.
+  - Data from the service may be kept 30 days at most. You are reminded; deleting
+    is up to you:  craftgraph_sync.py purge
+  - The data may not be passed on, sold or licensed. Exports and shared prices
+    contain only your own in-game scans.
+  - No charging for it, no ads in front of it.
+  - Blizzard may limit or end your access at any time and judges alone whether a
+    use harms the game. Breaking the terms can cost you the key and may have
+    consequences for your account.
+  - The routes used for World of Warcraft Forever are not in Blizzard's published
+    documentation and may change or close.
+""" % API_TERMS_URL
+
+
+def cmd_legal(args):
+    print(LEGAL_NOTES)
+
+
 def cmd_setup(args):
     cfg = load_config()
+    print(LEGAL_NOTES)
+    answer = input("Have you read Blizzard's terms and do you accept them yourself? Type yes to go on: ").strip().lower()
+    if answer not in ("yes", "y"):
+        print("Nothing was set up.")
+        return
     print("This needs a free Battle.net API client:")
     print("  1. Open https://develop.battle.net/access/clients and sign in.")
     print("  2. Create a client (any name; no redirect URL needed).")
@@ -632,10 +673,13 @@ def cmd_setup(args):
     region = input("Region [%s]: " % cfg.get("region", "eu")).strip().lower() or cfg.get("region", "eu")
     print("Rulesets: 1 PvP, 2 Normal, 3 Roleplay, 15 Roleplay PvP")
     ruleset = input("Ruleset [%s]: " % cfg.get("ruleset", 1)).strip() or cfg.get("ruleset", 1)
-    cfg.update(client_id=client_id, client_secret=secret, region=region, ruleset=int(ruleset))
+    cfg.update(client_id=client_id, client_secret=secret, region=region, ruleset=int(ruleset),
+               accepted_terms=int(time.time()))
     cfg.pop("house", None)
     save_config(cfg)
     print("Saved to %s (readable only by you)." % CONFIG_FILE)
+    print("The key is yours alone: it stays in that file on this computer. It is never put in the addon")
+    print("folder, in an export, or in anything that is shared or uploaded. Do not send that file to anyone.")
     print("Now do a full scan in the game, /reload, and run:  python3 %s run" % Path(__file__).name)
 
 
@@ -665,6 +709,7 @@ def cmd_run(args):
     print("%s: %d listings %s; %d snapshots kept; prices for %d items written for the addon."
           % (name or house, len(rows), "stored" if fresh else "already stored", count, written))
     print("They load at your next login or /reload.")
+    remind_to_purge(db)
 
 
 def cmd_houses(args):
@@ -1156,6 +1201,69 @@ def cmd_check_update(args):
         print("The game shows this at your next login or /reload.")
 
 
+# ----------------------------------------------------------------------------
+# Blizzard's terms: their data may be kept thirty days at most
+# ----------------------------------------------------------------------------
+BLIZZARD_KEEP_DAYS = 30
+BLIZZARD_TABLES = ("snapshot", "price", "sold", "latest")
+
+
+def oldest_blizzard_data(db):
+    """When the oldest data fetched from Blizzard's service was fetched, or None."""
+    oldest = None
+    for table in BLIZZARD_TABLES:
+        row = db.execute("SELECT MIN(t) FROM %s" % table).fetchone()
+        if row and row[0] and (oldest is None or row[0] < oldest):
+            oldest = row[0]
+    return oldest
+
+
+def remind_to_purge(db):
+    """Says so when data from Blizzard older than thirty days is held."""
+    oldest = oldest_blizzard_data(db)
+    if oldest and time.time() - oldest > BLIZZARD_KEEP_DAYS * 86400:
+        print("REMINDER: you hold data from Blizzard's service that is %d days old. Their terms allow %d days."
+              % ((time.time() - oldest) // 86400, BLIZZARD_KEEP_DAYS))
+        print("          Delete what is older with:  python3 %s purge" % Path(__file__).name)
+        return True
+    return False
+
+
+def cmd_purge(args):
+    """Deletes everything fetched from Blizzard's service more than thirty
+    days ago: from the database, and from the file the game reads. Your own
+    in-game scans are yours and are not touched."""
+    if not DB_FILE.exists():
+        print("There is no stored data yet, so nothing to delete.")
+        return
+    db = open_db()
+    cutoff = int(time.time()) - BLIZZARD_KEEP_DAYS * 86400
+    removed = 0
+    for table in BLIZZARD_TABLES:
+        removed += db.execute("DELETE FROM %s WHERE t < ?" % table, (cutoff,)).rowcount
+    db.commit()
+    db.execute("VACUUM")
+    print("Deleted %d rows of Blizzard's data older than %d days." % (removed, BLIZZARD_KEEP_DAYS))
+    # Write the game's file again, so that nothing older stays there either.
+    cfg = load_config()
+    path = saved_variables_file()
+    if cfg.get("house") and path:
+        saved = read_saved(path)
+        written = write_online(db, int(cfg["house"]), cfg.get("house_name", ""), cfg.get("house_realm", ""),
+                               tracked_items(saved))
+        if written:
+            print("The file the game reads was written again (%d items)." % written)
+        else:
+            stub = ADDON_DIR / "sync" / "Online.stub.lua"
+            if stub.exists():
+                (ADDON_DIR / "Data" / "Online.lua").write_text(stub.read_text(encoding="utf-8"), encoding="utf-8")
+            print("No Blizzard data is left; the game's file is empty again.")
+    oldest = oldest_blizzard_data(db)
+    if oldest:
+        print("The oldest Blizzard data now held is from %s." % time.strftime("%d %b %H:%M", time.localtime(oldest)))
+    print("Your own scans were not touched. In game, /reload to see it.")
+
+
 def cmd_status(args):
     cfg = load_config()
     print("Config: %s%s" % (CONFIG_FILE, "" if CONFIG_FILE.exists() else " (not set up yet)"))
@@ -1175,6 +1283,11 @@ def cmd_status(args):
                 n, items, time.strftime("%d %b %H:%M", time.localtime(first)),
                 time.strftime("%d %b %H:%M", time.localtime(last))))
         print("Stored in %s (%.1f MB)" % (DB_FILE, DB_FILE.stat().st_size / 1e6))
+        oldest = oldest_blizzard_data(db)
+        if oldest:
+            print("Oldest data from Blizzard's service: %s (their terms allow %d days)." % (
+                time.strftime("%d %b %Y", time.localtime(oldest)), BLIZZARD_KEEP_DAYS))
+        remind_to_purge(db)
     else:
         print("No history yet.")
 
@@ -1212,7 +1325,7 @@ def main():
                         choices=["setup", "run", "archive", "houses", "status", "install-timer", "remove-timer",
                                  "install-watch", "remove-watch", "check-update",
                                  "share-export", "share-import",
-                                 "data-publish", "data-pull", "data-sync"])
+                                 "data-publish", "data-pull", "data-sync", "purge", "legal"])
     parser.add_argument("file", nargs="?", help="for share-export and share-import: the .cg.json file")
     parser.add_argument("--fixture", help=argparse.SUPPRESS)      # read saved API answers (for tests)
     args = parser.parse_args()
@@ -1221,7 +1334,7 @@ def main():
      "install-watch": cmd_install_watch, "remove-watch": cmd_remove_watch,
      "check-update": cmd_check_update, "share-export": cmd_share_export,
      "share-import": cmd_share_import, "data-publish": cmd_data_publish,
-     "data-pull": cmd_data_pull, "data-sync": cmd_data_sync}[args.command](args)
+     "data-pull": cmd_data_pull, "data-sync": cmd_data_sync, "purge": cmd_purge, "legal": cmd_legal}[args.command](args)
 
 
 if __name__ == "__main__":

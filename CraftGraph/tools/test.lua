@@ -2725,6 +2725,141 @@ do
 end
 
 ------------------------------------------------------------------------------
+-- The auction house cut is taken off every sale at auction, and nowhere else.
+do
+  local O, J, D, M = ns.Opt, ns.Jobs, ns.Deals, ns.Market
+  local function snapshot()
+    local out = { craft = {}, flip = {}, fromvendor = {}, tovendor = {} }
+    for _, row in ipairs((D.All())) do
+      if out[row.kind] and row.id then out[row.kind][row.id .. ":" .. row.qty] = row end
+    end
+    return out
+  end
+  -- Something to relist: five cheap ones under a wall at 100.
+  local spare
+  for item in pairs(ns.Data.items) do
+    if not M.VendorBuy(item) and (ns.Data.items[item][6] or 1) >= 20 then spare = item break end
+  end
+  local spareWas = ns.realm.items[spare]
+  ns.realm.items[spare] = nil
+  local cheap = math.max(10, ns.VendorSell(spare) * 3)
+  M.Record(spare, { { cheap, 5 }, { cheap * 10, 50 }, { cheap * 10 + 1, 50 } }, { full = true, t = now })
+  ns.settings.cut = 0.05
+  ns.generation = ns.generation + 1
+  local low = snapshot()
+  local lowEval, craftId, craftQty
+  for key, row in pairs(low.craft) do
+    if row.craft and row.craft.mode ~= "vendor" then craftId, craftQty = row.id, row.qty break end
+  end
+  check(craftId ~= nil, "there is a craft sold at auction to check")
+  lowEval = O.Evaluate(craftId, craftQty)
+  local price = O.SalePrice(craftId)
+  check(near(lowEval.unitSale, price * 0.95, 1e-6) and near(lowEval.revenue, price * 0.95 * lowEval.produced, 1e-6)
+    and near(lowEval.profit, lowEval.revenue - lowEval.cost, 1e-6), "a craft's sale is the price less 5%, and profit is that less the cost")
+  local lowProj = J.Projection(craftId, craftQty)
+  local lowRank = O.Rank(craftId)
+  -- A quarter cut instead: every auction sale shrinks, vendor sales do not.
+  ns.settings.cut = 0.25
+  ns.generation = ns.generation + 1
+  local high = snapshot()
+  local highEval = O.Evaluate(craftId, craftQty)
+  check(near(highEval.revenue / lowEval.revenue, 0.75 / 0.95, 1e-6) and near(highEval.cost, lowEval.cost, 1e-6),
+    "a higher cut lowers the craft's revenue and leaves its cost alone")
+  local highProj = J.Projection(craftId, craftQty)
+  check(lowProj.now and highProj.now and highProj.now < lowProj.now
+    and near(highProj.rows[1].each * 0.75 * highProj.units - highProj.cost, highProj.now, 1), "projections take the cut off the sale")
+  check(O.Rank(craftId).perCraft < lowRank.perCraft, "and so does the ranking")
+  local flips, vendors, same = 0, 0, 0
+  for key, row in pairs(low.flip) do
+    local other = high.flip[key]
+    if other then
+      flips = flips + 1
+      check(near(row.profit + row.outlay, row.qty * row.sellEach * 0.95, 1) and other.profit < row.profit, "a relist is the resale less the cut, less the outlay")
+      break
+    end
+  end
+  for key, row in pairs(low.fromvendor) do
+    vendors = vendors + 1
+    check(near(row.profit / row.qty, row.sellEach * 0.95 - row.outlay / row.qty, 1), "vendor goods sold at auction pay the cut")
+    break
+  end
+  for key, row in pairs(low.tovendor) do
+    local other = high.tovendor[key]
+    if other then
+      same = same + 1
+      check(near(row.profit, other.profit, 1e-6) and near(row.profit, row.qty * row.sellEach - row.outlay, 1), "selling to a vendor pays no cut")
+      break
+    end
+  end
+  local sales = J.BagSales()
+  for _, row in ipairs(sales) do
+    if row.count > 0 and not row.none then
+      check(near(row.net, row.price * 0.75 * row.count, 1), "bag sales are after the cut")
+      break
+    end
+  end
+  ns.settings.cut = 0.05
+  ns.realm.items[spare] = spareWas
+  ns.generation = ns.generation + 1
+  check(flips + vendors + same >= 1, "trades were checked too (" .. flips .. " relist, " .. vendors .. " vendor to auction, " .. same .. " auction to vendor)")
+end
+
+------------------------------------------------------------------------------
+-- Blizzard's hourly data: the thirty days, the reminder and the delete button.
+do
+  local M = ns.Market
+  local id = 2611
+  local oldOnline, oldKeep = ns.Online, ns.db.onlineKeepAfter
+  ns.realm.items[id] = nil
+  ns.db.onlineKeepAfter, ns.db.onlineForgotAt = nil, nil
+  ns.Online = false
+  check(M.OnlineAge() == nil, "with no Blizzard data there is no age")
+  ns.Open(2840) RunTimers()
+  ns.UI.ShowData("blizzard")
+  local bp = ns.UI.blizzardPane
+  check(bp.status.text:find("Not set up", 1, true) and bp.boxes[1].text:find("craftgraph_setup.py", 1, true)
+    and bp.boxes[2].text:find("blizzard.com", 1, true) and bp.boxes[5].text:find("purge", 1, true),
+    "the page gives the setup steps: the setup page, the terms, the key, the commands: " .. bp.status.text)
+  check(bp.note.text:find("Your own responsibility", 1, true) and bp.note.text:find("nowhere else", 1, true),
+    "and says whose key and whose responsibility it is")
+  -- Forty days of hourly data.
+  local h = {}
+  for day = 40, 0, -1 do
+    h[#h + 1], h[#h + 2], h[#h + 3] = now - day * 86400, 100 + day, 50
+  end
+  ns.Online = { house = 1, name = "Test House", realm = ns.realmKey, updated = now - 600, first = now - 40 * 86400, snapshots = 960,
+    items = { [id] = { t = now - 600, n = 50, l = { 100, 50 }, h = h } } }
+  ns.generation = ns.generation + 1
+  ns.Fire("SOURCES")
+  check(M.OnlineAge() > 39 and M.OnlineAge() < 41, "the oldest Blizzard data is forty days old")
+  check(bp.status.text:find("Connected", 1, true) and bp.keep.text:find("40 days old", 1, true) and bp.keep.text:find("30", 1, true),
+    "overdue, the page says so: " .. bp.keep.text)
+  check(#M.Series(id) == 41, "all forty-one days are in use before deleting")
+  local said = false
+  local oldPrint = ns.Print
+  ns.Print = function(msg) if tostring(msg):find("30", 1, true) and tostring(msg):find("/cg blizzard", 1, true) then said = true end end
+  FireEvent("PLAYER_LOGIN") RunTimers()
+  ns.Print = oldPrint
+  check(said, "and logging in reminds you")
+  -- The button: nothing older than thirty days is used any more, and it stays that way.
+  bp.forget.scripts.OnClick(bp.forget)
+  local kept = M.Series(id)
+  check(#kept == 31 and kept[1][1] >= now - 30 * 86400 - 1, "the delete button drops what is older than thirty days (" .. #kept .. " left)")
+  check(M.OnlineAge() <= 30.01 and bp.done.text:find("Deleted in the game", 1, true) and bp.done.text:find("step 5", 1, true),
+    "it says it is done, and that the files are the tool's to delete: " .. bp.done.text)
+  check(M.Info(id).price == 100, "the fresh data stays in use")
+  ns.generation = ns.generation + 1
+  check(#M.Series(id) == 31, "and what was deleted does not come back")
+  -- Nothing from Blizzard's service is ever in an export.
+  local text = M.Export()
+  check(text:find('"' .. id .. '":', 1, true) == nil, "an item known only from Blizzard's data is not exported")
+  ns.Online, ns.db.onlineKeepAfter, ns.db.onlineForgotAt = oldOnline, oldKeep, nil
+  ns.generation = ns.generation + 1
+  SlashCmdList.CRAFTGRAPH("blizzard")
+  ns.UI.ShowData()
+end
+
+------------------------------------------------------------------------------
 -- The chart's row of sun and moon icons
 do
   local f = ns.Chart.Create(UIParent)

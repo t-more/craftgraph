@@ -58,6 +58,12 @@ what it saw and tells you why. One switch shows the guess anyway.
 It needs nothing but the game. This is an early version: most of it has only been checked outside
 the game so far, so expect rough edges and please say what breaks. [More on installing](docs/start/install.md).
 
+## Your responsibility
+This is a prototype made by a few friends. It comes as it is, and how you use it is up to you:
+your gold, your account, and, if you turn on the optional Blizzard prices, your own API key and
+Blizzard's terms. Read [LEGAL.md](LEGAL.md) before you rely on it. Not affiliated with or
+endorsed by Blizzard.
+
 ## Want to know more?
 
 Start at the [guide](docs/README.md). It goes from "what do I click" to "how does the maths work",

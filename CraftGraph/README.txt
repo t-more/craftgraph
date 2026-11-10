@@ -24,6 +24,20 @@ What it does
   how listings are stacked, who sells it, and whether it is rising or falling.
   These fill in as you scan at different times.
 
+Your responsibility
+  CraftGraph is a prototype made by a few friends, given as it is, with no
+  warranty. How you use it is your own decision and your own responsibility:
+  your gold and your account are at your own risk. It is not affiliated with
+  or endorsed by Blizzard. The optional hourly prices need an API key that
+  you make yourself at Blizzard; making it means you accept Blizzard's
+  Developer API Terms of Use yourself:
+    https://www.blizzard.com/en-us/legal/a2989b50-5f16-43b1-abec-2ae17cc09dd6/blizzard-developer-api-terms-of-use
+  In short: the key is yours alone and must stay secret; data from the
+  service may be kept 30 days at most (the Data page reminds you and has a
+  delete button); it may not be passed on or sold; Blizzard may end your
+  access at any time. The full notes are in LEGAL.md in the project's
+  repository, and in the game under Data > Blizzard prices.
+
 Install
   On Windows: unzip the download, quit the game, and double-click
   "Install CraftGraph". It finds the game and copies the addon in. Windows
@@ -189,13 +203,21 @@ Online prices (optional)
   next login or /reload. With it the addon has prices around the clock, real
   time-of-day patterns, and sales per day, without you standing at the
   auction house. Nothing is uploaded.
-    1. Install Python 3 (python.org) if you do not have it.
-    2. Create a free API client at https://develop.battle.net/access/clients
-    3. python3 sync/craftgraph_sync.py setup      (enter the client ID and secret)
-    4. Do a full scan in the game, /reload, then within a few hours:
-       python3 sync/craftgraph_sync.py run        (it finds which house is yours)
-    5. Run it again whenever you like, or every hour:
-       python3 sync/craftgraph_sync.py install-timer      (Linux; on Windows use Task Scheduler)
+  The easy way is the setup page. It needs Python 3 (python.org) and nothing
+  else, and opens in your browser, on your computer only:
+    Windows: double-click "Set up online features" in the addon's sync folder.
+    Linux and Mac: sh sync/setup.sh   (or python3 sync/craftgraph_setup.py)
+  The page shows what you take on, takes your own API key (made free at
+  https://develop.battle.net/access/clients), and has buttons to fetch the
+  prices, fetch every hour, delete Blizzard's data older than thirty days,
+  keep every scan, look for a newer version and share prices. The key is
+  written to one private file outside the addon folder and is never shown
+  again, exported, shared or uploaded.
+  The same by hand, in a terminal:
+    python3 sync/craftgraph_sync.py setup      (enter the client ID and secret)
+    python3 sync/craftgraph_sync.py run        (after a full scan in game and /reload)
+    python3 sync/craftgraph_sync.py install-timer      (every hour; Linux. On Windows use Task Scheduler)
+    python3 sync/craftgraph_sync.py purge      (delete Blizzard's data older than 30 days)
   Seller names and your own bank are not in Blizzard's data; those still come
   from the game.
 

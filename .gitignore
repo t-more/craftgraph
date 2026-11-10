@@ -3,3 +3,7 @@ __pycache__/
 *.pyc
 CraftGraph/tools/render/icons/
 media-build/
+# never commit an API key
+sync.json
+*.secret
+.env

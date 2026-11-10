@@ -184,6 +184,15 @@ ns.On("PLAYER_LOGIN", function()
   if not ns.db then return end
   InitRealm()
   ns.Fire("LOGIN")
+  -- Blizzard's terms: their data may be kept thirty days. Remind when older
+  -- data is held; deleting it is the player's to do.
+  C_Timer.After(10, function()
+    local age = ns.Market and ns.Market.OnlineAge and ns.Market.OnlineAge()
+    if age and age > ns.Market.ONLINE_KEEP_DAYS then
+      ns.Print("|cffff8c33you hold data from Blizzard's service that is " .. math.floor(age)
+        .. " days old; their terms allow 30. Delete the older part: /cg blizzard|r")
+    end
+  end)
   -- Say once, a little after logging in, if a newer version is known of.
   C_Timer.After(8, function()
     local newer = ns.NewerVersion()
@@ -408,6 +417,10 @@ SlashCmdList["CRAFTGRAPH"] = function(msg)
   end
   if msg == "sales" or msg == "sold" then
     if ns.UI and ns.UI.ShowSales then ns.Safe(ns.UI.ShowSales, false) end
+    return
+  end
+  if msg == "blizzard" or msg == "online" then
+    if ns.UI and ns.UI.ShowData then ns.Safe(ns.UI.ShowData, "blizzard") end
     return
   end
   if msg == "github" then

@@ -42,6 +42,17 @@ the human judge the effort. Friends get it as a zip, so it must work from the zi
     with "auto" as the default. Raw scans stay visible beside the smoothed line.
 14. **Small and fast inside the game.** One saved file, packed history, work spread over frames.
 
+## Legal footing
+- A prototype among friends, given as is; each user answers for their own use. `LEGAL.md` says
+  so, and the tool and the in-game Blizzard page repeat the main points with a link to the terms.
+- An API key is personal: one private file on the user's computer, never in the addon folder, the
+  repository, a zip, an export or an upload. Data from Blizzard's service is never passed on, and
+  the user is reminded to delete it after 30 days (a button and `purge`); we do not delete
+  behind their back.
+- The key is entered outside the game, on the setup page (`sync/craftgraph_setup.py`): standard
+  library only, served on 127.0.0.1 with a one-run code, and the key is never sent back to the
+  page. It only puts buttons on the tool's commands; anything new goes in the tool first.
+
 ## How we work
 - Source of truth: this repository. The game folder is an install target (`./install.sh`).
 - `./test.sh` before anything is called done. Offline checks prove our logic, not that the game

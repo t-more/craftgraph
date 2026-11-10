@@ -69,10 +69,38 @@ that you are there.
 
 Everything else stays on your computer. Without this the addon is unchanged.
 
+## Hourly prices from Blizzard, and what you take on
+The **Blizzard prices** sub-page (or `/cg blizzard`) has the setup steps with commands to copy,
+shows whether you are connected, and reminds you of the thirty days.
+
+![The Blizzard prices page](../media/data-blizzard.png)
+
+The game cannot run a program or reach the internet, so the key is entered outside it, on the
+**setup page**. With Python 3 installed, double-click **Set up online features** in the addon's
+`sync` folder (Windows) or run `sh sync/setup.sh` (Linux, Mac). A page opens in your browser,
+served by your own computer and reachable only from it. It walks through the steps in order:
+what you take on, your key, fetching the prices (once or every hour), the thirty days, and the
+extras that need no key (keep every scan, look for a newer version, shared prices). Each button
+runs the same command you could type yourself and shows what it printed. Without Python the
+launcher says so and nothing else changes.
+
+- **The key is yours.** You make it at Blizzard under your own account, which means you accept
+  [Blizzard's Developer API Terms of Use](https://www.blizzard.com/en-us/legal/a2989b50-5f16-43b1-abec-2ae17cc09dd6/blizzard-developer-api-terms-of-use) yourself. It is kept in one private file on your
+  computer and never in the addon folder, an export or anything uploaded.
+- **Thirty days.** Blizzard's terms allow their data to be kept 30 days at most. The page shows
+  how old the oldest data in use is, turns orange when it is overdue, and has a button, **Delete
+  what is older than 30 days**. The button stops the game using it at once; the files on your
+  computer are deleted by the tool's `purge` command, shown on the same page. Doing it is up to
+  you: nothing is deleted behind your back.
+- **It is never passed on.** Exports and shared prices hold only your own in-game scans.
+
+How you use this is your own responsibility; see [LEGAL.md](../../LEGAL.md).
+
 ## The optional Python tool
 The game cannot reach the internet or write a database, so those two jobs sit in a small tool,
 `sync/craftgraph_sync.py`, that runs outside the game:
 
+- `craftgraph_setup.py` is the setup page described above: the same commands with buttons.
 - `setup` and `run` bring Blizzard's hourly auction data in. This part has only been tested
   against a copy of the service, never the live one.
 - `archive` copies every scan into a SQLite database and keeps the raw saved files.

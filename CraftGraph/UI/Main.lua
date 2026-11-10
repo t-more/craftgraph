@@ -2408,10 +2408,11 @@ end
 local dataPage, dataButton, graphButton
 local dataTab = "sources"
 local DATA_TABS = {
-  { key = "sources", text = "Data sources", width = 112 },
-  { key = "share", text = "Share prices", width = 104 },
-  { key = "github", text = "Online sharing", width = 112 },
-  { key = "sales", text = "Sales seen", width = 100 },
+  { key = "sources", text = "Data sources", width = 108 },
+  { key = "blizzard", text = "Blizzard prices", width = 112 },
+  { key = "share", text = "Share prices", width = 100 },
+  { key = "github", text = "Online sharing", width = 108 },
+  { key = "sales", text = "Sales seen", width = 92 },
 }
 
 local function CreateDataPage(parent)
@@ -3576,7 +3577,7 @@ local SOURCES = {
       if o then return "from " .. ns.Age(time() - (o.updated or 0)) end
       if ns.Online and ns.Online.realm and ns.Online.realm ~= ns.realmKey then return "for another auction house" end
       if ns.Online then return "switched off" end
-      return "not set up (optional, needs Python)"
+      return "not set up: see the Blizzard prices page"
     end,
     there = function() return ns.Online and ns.Online ~= false and ns.Online.realm == ns.realmKey end,
     tip = "Prices, depth and sales from Blizzard's hourly auction data, brought in by the optional sync "
@@ -3882,8 +3883,8 @@ local function CopyBox(parent, y, label, text)
   l:SetMaxLines(2)
   l:SetText(label)
   local box = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-  box:SetSize(560, 20)
-  box:SetPoint("TOPLEFT", 22, y - 30)
+  box:SetSize(640, 20)
+  box:SetPoint("TOPLEFT", 22, y - 17)
   box:SetAutoFocus(false)
   box:SetText(text)
   -- The text is there to be copied, not changed.
@@ -3928,17 +3929,17 @@ local function BuildGitHub()
   head:SetText("To connect (outside the game; click a box and press Ctrl+C to copy)")
   f.boxes = {
     CopyBox(f, -218, "1. The shared place. Open it to see who shares, and to ask to be let in:", DATA_REPO),
-    CopyBox(f, -276, "2. Fetch what others share. Needs Python 3, no account. Run in the CraftGraph addon folder:",
+    CopyBox(f, -266, "2. Fetch what others share. Needs Python 3, no account. Run in the CraftGraph addon folder:",
       "python3 sync/craftgraph_sync.py data-pull"),
-    CopyBox(f, -334, "3. Share yours as well. Needs the GitHub CLI logged in (gh auth login) and the owner's go-ahead:",
+    CopyBox(f, -314, "3. Share yours as well. Needs the GitHub CLI logged in (gh auth login) and the owner's go-ahead:",
       "python3 sync/craftgraph_sync.py data-sync"),
   }
   f.note = Text(f, "GameFontDisableSmall")
-  f.note:SetPoint("TOPLEFT", 16, -396)
-  f.note:SetPoint("TOPRIGHT", -16, -396)
+  f.note:SetPoint("TOPLEFT", 16, -368)
+  f.note:SetPoint("TOPRIGHT", -16, -368)
   f.note:SetWordWrap(true)
   f.note:SetMaxLines(3)
-  f.note:SetText("Sharing makes public: your character's name, your GitHub name, and the prices from your scans "
+  f.note:SetText("Sharing is your own choice and your own responsibility. It makes public: your character's name, your GitHub name, and the prices from your scans "
     .. "of the last day. Each player you fetch has a switch of their own on the Data sources page, and your "
     .. "own prices are never imported back.")
 end
@@ -3971,6 +3972,124 @@ function UI.UpdateGitHub()
     f.people:SetText(GREY .. "No other player's prices are held.|r")
   end
   f.others, f.me = others, me
+end
+
+------------------------------------------------------------------------------
+-- The Blizzard prices page: how to set the hourly data up, whose key it is,
+-- and the thirty days their terms allow the data to be kept.
+------------------------------------------------------------------------------
+local blizzardPane
+
+local function BuildBlizzard()
+  if blizzardPane then return end
+  local f = dataPage.panes.blizzard
+  blizzardPane = f
+  UI.blizzardPane = f
+  f.title = Text(f, "GameFontNormal")
+  f.title:SetPoint("TOPLEFT", 16, -8)
+  f.title:SetText("Hourly prices from Blizzard (optional)")
+  f.intro = Text(f, "GameFontHighlightSmall")
+  f.intro:SetPoint("TOPLEFT", 16, -26)
+  f.intro:SetPoint("TOPRIGHT", -16, -26)
+  f.intro:SetWordWrap(true)
+  f.intro:SetMaxLines(3)
+  f.intro:SetSpacing(2)
+  f.intro:SetText("Blizzard publishes every auction house once an hour. A small optional program on your "
+    .. "computer fetches yours, so prices are known while you are away. The data comes from Blizzard; "
+    .. "CraftGraph is not affiliated with or endorsed by Blizzard. Without this nothing here changes.")
+  f.status = Text(f, "GameFontHighlight")
+  f.status:SetPoint("TOPLEFT", 16, -74)
+  f.status:SetPoint("TOPRIGHT", -16, -74)
+  f.status:SetWordWrap(true)
+  f.status:SetMaxLines(2)
+  -- The thirty days.
+  f.keep = Text(f, "GameFontHighlightSmall")
+  f.keep:SetPoint("TOPLEFT", 16, -110)
+  f.keep:SetPoint("TOPRIGHT", -230, -110)
+  f.keep:SetWordWrap(true)
+  f.keep:SetMaxLines(3)
+  f.keep:SetSpacing(2)
+  f.forget = Button(f, "Delete what is older than 30 days", 206)
+  f.forget:SetPoint("TOPRIGHT", -16, -108)
+  f.forget:SetScript("OnClick", function()
+    ns.Market.ForgetOldOnline()
+    UI.UpdateBlizzard()
+  end)
+  Tip(f.forget, "Delete old Blizzard data",
+    "Blizzard's terms allow data from their service to be kept thirty days at most. This stops the game "
+    .. "using anything older, at once and for good. The files on your computer are deleted by the "
+    .. "program itself: its setup page has a button, or run the \"purge\" command shown below. Your own scans are yours and stay.")
+  f.done = Text(f, "GameFontHighlightSmall")
+  f.done:SetPoint("TOPLEFT", 16, -156)
+  f.done:SetPoint("TOPRIGHT", -16, -156)
+  f.done:SetWordWrap(true)
+  f.done:SetMaxLines(2)
+  local head = Text(f, "GameFontNormal")
+  head:SetPoint("TOPLEFT", 16, -186)
+  head:SetText("Setting it up (outside the game; click a box and press Ctrl+C to copy)")
+  local tool = "python3 sync/craftgraph_sync.py "
+  f.boxes = {
+    CopyBox(f, -206, "1. Easiest: the setup page. In the addon's sync folder, double-click \"Set up online features\" "
+      .. "(Windows) or run this. Needs Python 3 (free: python.org/downloads):",
+      "python3 sync/craftgraph_setup.py"),
+    CopyBox(f, -250, "2. It asks you to read Blizzard's Developer API Terms of Use. Making a key means you accept them yourself:",
+      "https://www.blizzard.com/en-us/legal/a2989b50-5f16-43b1-abec-2ae17cc09dd6/blizzard-developer-api-terms-of-use"),
+    CopyBox(f, -294, "3. And for a free API key of your own, made here (sign in, Create Client, any name):",
+      "https://develop.battle.net/access/clients"),
+    CopyBox(f, -338, "4. Without the page: \"setup\" once in your own terminal, then this to fetch (full scan in game first):",
+      tool .. "run"),
+    CopyBox(f, -382, "5. Every 30 days: delete Blizzard's older data from your computer (the page has a button too):",
+      tool .. "purge"),
+  }
+  f.note = Text(f, "GameFontDisableSmall")
+  f.note:SetPoint("TOPLEFT", 16, -428)
+  f.note:SetPoint("TOPRIGHT", -16, -428)
+  f.note:SetWordWrap(true)
+  f.note:SetMaxLines(6)
+  f.note:SetSpacing(2)
+  f.note:SetText("|cffff8c33Your own responsibility.|r CraftGraph is a prototype among friends, given as it is. The key "
+    .. "is personal: you make it, you accept Blizzard's terms, you answer for its use. It is kept in one "
+    .. "private file on your computer (sync.json in your own config folder) and nowhere else: not in the "
+    .. "addon folder, not in an export, not in anything shared or uploaded. Never send it to anyone. "
+    .. "Main points of the terms: keep their data 30 days at most; do not pass it on or sell it; Blizzard "
+    .. "may end your access at any time, and breaking the terms can cost you the key and may have "
+    .. "consequences for your account. Exports and shared prices hold only your own in-game scans.")
+end
+
+function UI.UpdateBlizzard()
+  BuildBlizzard()
+  local f = blizzardPane
+  local M = ns.Market
+  local o = ns.Online
+  local age = M.OnlineAge()
+  if not o or o == false then
+    f.status:SetText("|cffff8c33Not set up.|r The steps are below.")
+  elseif o.realm ~= ns.realmKey then
+    f.status:SetText("|cffff8c33Set up for another auction house|r (" .. tostring(o.realm) .. "), so it is not used here.")
+  elseif not age then
+    f.status:SetText("Set up, but no data is in use: it was all deleted. Run the program to fetch fresh prices.")
+  else
+    f.status:SetText("|cff66ff66Connected:|r " .. tostring(o.name or "your auction house") .. ", prices from "
+      .. ns.Age(time() - (o.updated or 0)) .. " (" .. (o.snapshots or 0) .. " hourly snapshots)"
+      .. (M.Source("Online") and "." or "; switched off on the Data sources page."))
+  end
+  local keep = M.ONLINE_KEEP_DAYS
+  if age and age > keep then
+    f.keep:SetText("|cffff8c33You hold Blizzard data that is " .. math.floor(age) .. " days old.|r Their terms allow "
+      .. keep .. " days: delete the older part now, here and with step 5 below.")
+  elseif age then
+    f.keep:SetText("Blizzard's terms allow their data to be kept " .. keep .. " days. The oldest in use is "
+      .. (age < 1 and "under a day" or (math.floor(age) .. (math.floor(age) == 1 and " day" or " days")))
+      .. " old" .. GREY .. " (" .. math.max(0, math.ceil(keep - age)) .. " days to go).|r")
+  else
+    f.keep:SetText(GREY .. "Blizzard's terms allow their data to be kept " .. keep
+      .. " days. Once you use it, this page reminds you when to delete.|r")
+  end
+  f.forget:SetEnabled(age ~= nil)
+  local at = ns.db.onlineForgotAt
+  f.done:SetText(at and ("|cff66ff66Deleted in the game " .. ns.Age(time() - at) .. ":|r nothing older than " .. keep
+    .. " days is used. Now delete it from your computer too, with step 5.") or "")
+  f.age = age
 end
 
 ------------------------------------------------------------------------------
@@ -4137,6 +4256,8 @@ function UI.SelectDataTab(tab)
     if shareFrame.box:GetText() == "" and shareFrame.result:GetText() == "" then
       ShareSay("Press Export to put your prices in the box, or paste what you were sent and press Import.", nil)
     end
+  elseif dataTab == "blizzard" then
+    UI.UpdateBlizzard()
   elseif dataTab == "github" then
     UI.UpdateGitHub()
   elseif dataTab == "sales" then
@@ -4178,6 +4299,7 @@ end
 
 ns.Listen("SOURCES", function()
   if dataPage and dataPage:IsShown() and dataTab == "github" then ns.Safe(UI.UpdateGitHub) end
+  if dataPage and dataPage:IsShown() and dataTab == "blizzard" then ns.Safe(UI.UpdateBlizzard) end
 end)
 ns.Listen("MARKET_UPDATED", function()
   if dataPage and dataPage:IsShown() and dataTab == "sales" then ns.Safe(UI.UpdateSalesList) end

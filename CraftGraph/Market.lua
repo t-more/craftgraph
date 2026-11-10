@@ -476,10 +476,40 @@ end
 -- Online data: Blizzard's hourly auction house snapshots, brought in from
 -- outside the game by sync/craftgraph_sync.py. It is used only when it is
 -- for the auction house the player is on.
+-- Blizzard's terms allow data from their service to be kept thirty days
+-- at most. The player deletes older data by hand (the Data page reminds
+-- them): M.ForgetOldOnline sets the moment before which Blizzard's data is
+-- no longer used in the game; the files outside the game are deleted by
+-- the tool's "purge".
+M.ONLINE_KEEP_DAYS = 30
+
+-- How old the oldest Blizzard data in use is, in days, or nil when none is.
+function M.OnlineAge()
+  local o = ns.Online
+  if not o or not o.items or not o.first then return nil end
+  local oldest = max(o.first, ns.db and ns.db.onlineKeepAfter or 0)
+  if (o.updated or 0) < oldest then return nil end        -- all of it was forgotten
+  return (time() - oldest) / 86400
+end
+
+-- Stops using any Blizzard data older than thirty days. Returns the moment
+-- from which it is still used.
+function M.ForgetOldOnline()
+  ns.db.onlineKeepAfter = time() - M.ONLINE_KEEP_DAYS * 86400
+  ns.db.onlineForgotAt = time()
+  ns.generation = ns.generation + 1
+  ns.Fire("SOURCES")
+  ns.Fire("MARKET_UPDATED")
+  return ns.db.onlineKeepAfter
+end
+
 function M.Online(id)
   local o = ns.Online
   local meta = (o and o.items and o.realm == ns.realmKey and M.Source("Online")) and o or nil
   local on = meta and meta.items[id] or nil
+  -- What the player had deleted is not used again.
+  local keepAfter = ns.db and ns.db.onlineKeepAfter
+  if on and keepAfter and (on.t or 0) < keepAfter then on = nil end
   -- Prices another player shared count the same way: whichever is newer.
   local shared = M.Shared(id)
   if shared and (not on or (shared.t or 0) > (on.t or 0)) then return shared, meta end
@@ -1210,9 +1240,10 @@ function M.Series(id)
   end
   if on and on.h then
     local own = #out
+    local keepAfter = ns.db and ns.db.onlineKeepAfter or 0
     for i = 1, #on.h, 3 do
       local t, price = on.h[i], on.h[i + 1]
-      if price and price > 0 then
+      if price and price > 0 and t >= keepAfter then
         local clash = false
         for j = 1, own do
           if math.abs(out[j][1] - t) < HISTORY_MERGE_SECONDS then clash = true break end

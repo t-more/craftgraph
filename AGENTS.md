@@ -72,6 +72,9 @@ the human judge the effort. Friends get it as a zip, so it must work from the zi
 - Docs: `README.md` sells it in simple words; `docs/` goes deeper level by level.
 
 ## Versions and release notes
+- Semantic versions: major.minor.patch (`0.2.1`).
+- The addon is experimental and says so: a red label on the window and at the top of the readme.
+  State what has been tried in the game and for how long; do not claim more.
 - The version is hardcoded: `ns.VERSION` in `Core.lua`, matched by the TOC and the readme. A
   GitHub release tagged `v<version>` carries the zip.
 - The game cannot reach the internet. A newer version is noticed by the installer and by the

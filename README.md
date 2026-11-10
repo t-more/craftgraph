@@ -1,11 +1,15 @@
 # CraftGraph
 
+> $\color{red}{\textbf{EXPERIMENTAL}}$ &nbsp; A prototype. It has been tried in the game, but not for long.
+> Check what it proposes before you spend gold.
+
 **Make gold at the auction house in World of Warcraft Forever without doing the sums yourself.**
 Open it in game with `/cg`.
 
 ![A quick tour](docs/media/tour.gif)
 
-*A one-minute tour ([video](docs/media/tour.mp4)). The pictures here were drawn from the addon's
+*A one-minute tour ([video](docs/media/tour.mp4)), and, for fun, [the trailer](docs/media/trailer.mp4)
+(with sound). The pictures here were drawn from the addon's
 own interface code, outside the game, on a simulated market unless they say "real".*
 
 ## What you can do with it
@@ -76,8 +80,8 @@ what it saw and tells you why. One switch shows the guess anyway.
    `World of Warcraft/_forever_/Interface/AddOns/`.
 3. Start the game, open the auction house, type `/cg` and press **Full scan**.
 
-It needs nothing but the game. This is an early version: most of it has only been checked outside
-the game so far, so expect rough edges and please say what breaks. [More on installing](docs/start/install.md).
+It needs nothing but the game. **Experimental:** it has been tried in the game, but not for long,
+so expect rough edges and please say what breaks. [More on installing](docs/start/install.md).
 
 ## Your responsibility
 This is a prototype made by a few friends. It comes as it is, and how you use it is up to you:

@@ -212,7 +212,7 @@ end)
 -- online, so whether a newer version exists is only known when something
 -- outside the game has written Data/Latest.lua: the optional sync tool does.
 ------------------------------------------------------------------------------
-ns.VERSION = "0.2"
+ns.VERSION = "0.2.1"
 ns.RELEASES = "https://github.com/t-more/craftgraph/releases/latest"
 
 -- Is version a later than version b? Compared number by number: 0.10 > 0.9.

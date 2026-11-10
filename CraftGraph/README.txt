@@ -1,4 +1,7 @@
-CraftGraph 0.2 - for World of Warcraft Forever (interface 16001)
+CraftGraph 0.2.1 - for World of Warcraft Forever (interface 16001)
+
+EXPERIMENTAL. It has been tried in the game, but not for long. Expect rough
+edges, check what it proposes before you spend gold, and say what breaks.
 
 What it does
   Shows every way to make money right now, with the amount worth doing, what it

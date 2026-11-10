@@ -3425,6 +3425,19 @@ local function Create()
   frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
   frame:Hide()
   if frame.SetTitle then frame:SetTitle("CraftGraph") end
+  -- Said plainly on the window itself: this is an experiment.
+  local trial = CreateFrame("Button", nil, frame)
+  trial:SetSize(110, 16)
+  trial:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -34, -3)
+  trial:SetFrameLevel((frame:GetFrameLevel() or 1) + 10)
+  trial.text = trial:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  trial.text:SetAllPoints()
+  trial.text:SetJustifyH("RIGHT")
+  trial.text:SetText("|cffff2020EXPERIMENTAL|r")
+  Tip(trial, "Experimental (version " .. ns.VERSION .. ")",
+    "CraftGraph is a prototype. It has been tried in the game, but not for long. Figures can be wrong and "
+    .. "buttons can misbehave: look at what it proposes before you spend gold, and say what breaks.")
+  frame.trial = trial
   if frame.SetPortraitToAsset then frame:SetPortraitToAsset("Interface\\Icons\\INV_Misc_Coin_02") end
   tinsert(UISpecialFrames, "CraftGraphFrame")
 

@@ -64,7 +64,7 @@ local function Button(parent, text, width)
   local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
   b:SetSize(width, 22)
   b:SetText(text)
-  return b
+  return ns.Skin.Button(b)
 end
 
 local function Text(parent, font, justify)
@@ -145,6 +145,7 @@ local rows = {}
 
 local function CreatePanel(parent)
   local p = CreateFrame("Frame", nil, parent, "InsetFrameTemplate")
+  ns.Skin.Panel(p)
   p:SetPoint("TOPRIGHT", -8, -62)
   p:SetPoint("BOTTOMRIGHT", -8, 8)
   p:SetWidth(PANEL_W)
@@ -159,6 +160,7 @@ local function CreatePanel(parent)
   p.iconBorder = p:CreateTexture(nil, "OVERLAY")
   p.iconBorder:SetTexture("Interface\\Common\\WhiteIconFrame")
   p.iconBorder:SetAllPoints(p.icon)
+  ns.Skin.IconFrame(p.iconBorder, p.icon, 40)
   p.teach = UI.CreateTeachMark(p, p.icon, 18)
   p.name = Text(p, "GameFontNormalLarge")
   p.name:SetPoint("TOPLEFT", p.icon, "TOPRIGHT", 10, -2)
@@ -2857,7 +2859,7 @@ end
 -- buy at auction, collect mail, buy from a vendor, craft, post.
 ------------------------------------------------------------------------------
 local hud
-local HUD_W, HUD_ROW, HUD_HEAD = 370, 66, 44
+local HUD_W, HUD_ROW, HUD_HEAD, HUD_FOOT = 370, 66, 48, 34
 local KIND_COLOR = {
   ah = { 1, 0.82, 0 }, mail = { 0.45, 0.75, 1 }, vendor = { 0.4, 1, 0.4 }, craft = { 1, 0.6, 0.25 },
   sell = { 0.4, 1, 0.4 }, done = { 0.6, 0.6, 0.6 }, stuck = { 1, 0.35, 0.3 },
@@ -2967,11 +2969,11 @@ local function CreateHUD()
       end)
     Small("x", -2, "Remove from the plan", "Takes this item out of your plan and forgets its progress.",
       function(pin) ns.Jobs.Unpin(pin.id) end)
+    -- What one costs and brings, and the same for all of them.
     row.status = Text(row, "GameFontHighlightSmall")
-    row.status:SetPoint("TOPLEFT", row.name, "BOTTOMLEFT", 0, -3)
-    row.status:SetPoint("TOPRIGHT", row.name, "BOTTOMRIGHT", 0, -3)
-    row.status:SetWordWrap(true)
-    row.status:SetMaxLines(2)
+    row.status:SetPoint("TOPLEFT", row, "TOPLEFT", 38, -19)
+    row.status:SetPoint("TOPRIGHT", row, "TOPRIGHT", -4, -19)
+    row.status:SetWordWrap(false)
     -- The goal: what the plan should earn now, how that has moved, and
     -- what it has been over the time the plan has run.
     row.goal = Text(row, "GameFontHighlightSmall")
@@ -3012,6 +3014,20 @@ local function CreateHUD()
         if step.where then GameTooltip:AddLine("    " .. step.where, 0.6, 0.6, 0.6, true) end
       end
       local pin = job.pin
+      local m = ns.Jobs.Money(job)
+      GameTooltip:AddLine(" ")
+      GameTooltip:AddDoubleLine("Money", "each / all " .. ns.Round(m.units), 1, 0.82, 0, 1, 0.82, 0)
+      local function Pair(label, each, all)
+        GameTooltip:AddDoubleLine(label, ns.Money(each) .. "  /  " .. ns.Money(all), 1, 1, 1, 1, 1, 1)
+      end
+      Pair(m.trade and "Costs to buy" or "Costs to make", m.costEach, m.cost)
+      Pair(m.toVendor and "A vendor pays" or "Sells for, after the cut",
+        m.sellEach, m.income)
+      GameTooltip:AddDoubleLine("Still to spend", ns.Money(m.toSpend), 1, 1, 1, 1, 1, 1)
+      if m.units > m.qty then
+        GameTooltip:AddLine("The recipe makes " .. ns.Round(m.units) .. ", so the extra are counted as sold too.",
+          0.6, 0.6, 0.6, true)
+      end
       if pin.goal then
         GameTooltip:AddLine("Goal: " .. ns.Deals.KIND[pin.goal.kind]:lower() .. ", planned for "
           .. Signed(pin.goal.profit or 0) .. ".", 1, 0.82, 0, true)
@@ -3048,6 +3064,13 @@ local function CreateHUD()
     hud.rows[i] = row
   end
 
+  -- The whole plan: what it costs, what is left to spend, what it brings.
+  hud.total = Text(hud, "GameFontHighlightSmall")
+  hud.total:SetPoint("BOTTOMLEFT", 12, 8)
+  hud.total:SetPoint("BOTTOMRIGHT", -12, 8)
+  hud.total:SetJustifyH("LEFT")
+  hud.total:SetWordWrap(true)
+
   hud.buy = Button(hud, "Buy all", HUD_W - 16)
   hud.buy:SetPoint("BOTTOM", 0, 8)
   hud.buy:SetScript("OnClick", function() ns.Safe(ns.Jobs.BuyFromMerchant) end)
@@ -3075,6 +3098,26 @@ function UI.GoalText(pin)
   end
   if st.n >= 3 then
     text = text .. GREY .. "  med|r " .. Signed(Short(st.median)) .. GREY .. "  avg|r " .. Signed(Short(st.mean))
+  end
+  return text
+end
+
+-- One line on a planned item's money: what one costs to make and sells
+-- for after the cut, then the same for all of them.
+function UI.UnitText(m)
+  return GREY .. "Each|r " .. ns.Money(m.costEach) .. GREY .. (m.trade and " to buy" or " to make")
+    .. (m.toVendor and ", vendor pays|r " or ", sells|r ") .. ns.Money(m.sellEach)
+    .. GREY .. "   All " .. ns.Round(m.units) .. ":|r " .. ns.Money(m.cost) .. GREY .. " to|r " .. ns.Money(m.income)
+end
+
+-- Two lines on the whole plan: what following it costs and what is left
+-- to spend, then what selling everything brings and the profit.
+function UI.TotalText(all)
+  local text = "|cffffd100Whole plan|r costs " .. ns.Money(all.cost) .. GREY .. ", still to spend|r "
+    .. ns.Money(all.toSpend) .. "\n" .. GREY .. "Sold, it brings|r " .. ns.Money(all.income)
+    .. GREY .. " after any cut:|r " .. Signed(all.profit)
+  if all.unknown > 0 then
+    text = text .. GREY .. " (" .. all.unknown .. (all.unknown == 1 and " item" or " items") .. " not priced)|r"
   end
   return text
 end
@@ -3118,7 +3161,7 @@ function UI.UpdateHUD()
       row.name:SetText(ns.ItemName(job.pin.id) .. " |cffffffffx" .. job.pin.qty .. "|r")
       row.name:SetTextColor(r, g, b)
       -- The next step is the first of the lines below, with its button.
-      row.status:SetText("")
+      row.status:SetText(UI.UnitText(ns.Jobs.Money(job)))
       row.goal:SetText(UI.GoalText(job.pin))
       row:Show()
     else
@@ -3132,12 +3175,16 @@ function UI.UpdateHUD()
   hud.where:SetText(where)
   for i = used + 1, #hud.lines do hud.lines[i]:Hide() end
   hud.usedLines = used
-  local height = 6 - y
+  hud.total:SetText(UI.TotalText(ns.Jobs.MoneyAll(jobs)))
+  local height = 6 - y + HUD_FOOT
+  local foot = 8 + HUD_FOOT
   hud.buy:Hide()
   if ns.Jobs.place == "merchant" then
     local offer, total = ns.Jobs.MerchantOffer()
     if #offer > 0 then
       hud.buy:SetText("Buy all here: " .. ns.Money(total))
+      hud.buy:ClearAllPoints()
+      hud.buy:SetPoint("BOTTOM", 0, foot)
       hud.buy:Show()
       height = height + 28
     end
@@ -3150,7 +3197,7 @@ function UI.UpdateHUD()
   hud.mail:Hide()
   if waiting then
     hud.mail:ClearAllPoints()
-    hud.mail:SetPoint("BOTTOM", 0, hud.buy:IsShown() and 34 or 8)
+    hud.mail:SetPoint("BOTTOM", 0, hud.buy:IsShown() and foot + 26 or foot)
     hud.mail:Show()
     height = height + 26
   end
@@ -3418,7 +3465,10 @@ end
 -- Window
 ------------------------------------------------------------------------------
 local function Create()
-  frame = CreateFrame("Frame", "CraftGraphFrame", UIParent, "PortraitFrameTemplate")
+  -- With the addon's own look the window is a plain frame that the skin
+  -- dresses; without it, the game's standard window.
+  local skinned = ns.Skin.On()
+  frame = CreateFrame("Frame", "CraftGraphFrame", UIParent, (not skinned) and "PortraitFrameTemplate" or nil)
   frame:SetSize(FRAME_W, FRAME_H)
   frame:SetPoint("CENTER")
   frame:SetFrameStrata("HIGH")
@@ -3430,21 +3480,31 @@ local function Create()
   frame:SetScript("OnDragStart", frame.StartMoving)
   frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
   frame:Hide()
-  if frame.SetTitle then frame:SetTitle("CraftGraph") end
+  if skinned then
+    ns.Skin.Window(frame, "CraftGraph")
+    ns.Skin.Emblem(frame, "Interface\\Icons\\INV_Misc_Coin_02")
+    local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+    close:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -16, -10)
+    close:SetFrameLevel((frame:GetFrameLevel() or 1) + 12)
+    close:SetScript("OnClick", function() frame:Hide() end)
+    frame.CloseButton = close
+  elseif frame.SetTitle then
+    frame:SetTitle("CraftGraph")
+  end
   -- Said plainly on the window itself: this is an experiment.
   local trial = CreateFrame("Button", nil, frame)
-  trial:SetSize(110, 16)
-  trial:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -34, -3)
+  trial:SetSize(skinned and 160 or 110, 16)
+  trial:SetPoint("TOPRIGHT", frame, "TOPRIGHT", skinned and -46 or -34, skinned and -12 or -3)
   trial:SetFrameLevel((frame:GetFrameLevel() or 1) + 10)
   trial.text = trial:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   trial.text:SetAllPoints()
   trial.text:SetJustifyH("RIGHT")
-  trial.text:SetText("|cffff2020EXPERIMENTAL|r")
+  trial.text:SetText(skinned and ("|cff9d8a66v" .. ns.VERSION .. "|r  |cffff2020EXPERIMENTAL|r") or "|cffff2020EXPERIMENTAL|r")
   Tip(trial, "Experimental (version " .. ns.VERSION .. ")",
     "CraftGraph is a prototype. It has been tried in the game, but not for long. Figures can be wrong and "
     .. "buttons can misbehave: look at what it proposes before you spend gold, and say what breaks.")
   frame.trial = trial
-  if frame.SetPortraitToAsset then frame:SetPortraitToAsset("Interface\\Icons\\INV_Misc_Coin_02") end
+  if not skinned and frame.SetPortraitToAsset then frame:SetPortraitToAsset("Interface\\Icons\\INV_Misc_Coin_02") end
   tinsert(UISpecialFrames, "CraftGraphFrame")
 
   local available = UIParent:GetWidth()
@@ -3600,6 +3660,7 @@ local function Create()
 
   -- Graph area
   local inset = CreateFrame("Frame", nil, frame, "InsetFrameTemplate")
+  ns.Skin.Panel(inset)
   inset:SetPoint("TOPLEFT", 8, -62)
   inset:SetPoint("BOTTOMRIGHT", -(PANEL_W + 12), 28)
   view = ns.GraphView.Create(inset)

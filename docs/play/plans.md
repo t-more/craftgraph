@@ -46,6 +46,21 @@ The plan window lists the same steps under each planned item.
 
 ![The plan window with its steps](../media/plan.png)
 
+### What it costs and brings
+Under each item's name a line gives the money for one and for all of them:
+
+    Each 37s 90c to make, sells 3g 14s     All 50: 18g 94s to 157g
+
+"Sells" is after the auction house's cut. A trade says "to buy" instead of "to make", and a
+sale to a vendor says "vendor pays", with no cut. When a recipe makes several at a time and so
+makes more than you asked for, "All" counts every one it makes. Hovering the item shows the same
+figures with what is still to spend on it.
+
+At the bottom of the window, **Whole plan** adds up every item: what following the plan costs as
+if you held nothing yet, how much of that is **still to spend** on the steps left (what you hold
+or have bought is not counted again), what selling everything brings and the profit. An item
+with no price yet is left out of the sums, and the line says how many were.
+
 ### A button on every step
 Each step has a small button that does it for you. It is grey until you are where the step can
 be done, and hovering it says where that is:

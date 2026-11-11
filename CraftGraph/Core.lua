@@ -213,7 +213,7 @@ end)
 -- online, so whether a newer version exists is only known when something
 -- outside the game has written Data/Latest.lua: the optional sync tool does.
 ------------------------------------------------------------------------------
-ns.VERSION = "0.2.1"
+ns.VERSION = "0.3.0"
 ns.RELEASES = "https://github.com/t-more/craftgraph/releases/latest"
 
 -- Is version a later than version b? Compared number by number: 0.10 > 0.9.
@@ -404,6 +404,12 @@ SlashCmdList["CRAFTGRAPH"] = function(msg)
     ns.Print(ns.settings.flowGlow and "lights drift along the graph's lines towards where money is made."
       or "the graph's lines are still.")
     if ns.UI and ns.UI.Refresh then ns.UI.Refresh() end
+    return
+  end
+  if msg == "skin" or msg == "look" then
+    ns.settings.skin = ns.settings.skin == false
+    ns.Print(ns.settings.skin and "the addon's own look (stone, gold frame) is on" or "the game's standard window look is on")
+    ns.Print("type /reload to see the change.")
     return
   end
   if msg == "priors" then

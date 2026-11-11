@@ -192,6 +192,9 @@ local function CreateNode(canvas)
   b.iconBorder = b:CreateTexture(nil, "OVERLAY")
   b.iconBorder:SetTexture("Interface\\Common\\WhiteIconFrame")
   b.iconBorder:SetAllPoints(b.icon)
+  ns.Skin.IconFrame(b.iconBorder, b.icon, 40)
+  -- The item in the middle glows blue.
+  b.centreGlow = ns.Skin.Glow(b, G.NODE_W, G.NODE_H, 0.3, 0.65, 1)
 
   -- For something the player could make if the recipe were learned: the
   -- recipe that teaches it, small, on the corner of the icon. Click it to
@@ -301,6 +304,7 @@ local function CreateNode(canvas)
 
     local step = CreateFrame("Button", nil, b, "UIPanelButtonTemplate")
     step:SetSize(62, 15)
+    ns.Skin.Button(step, 15)
     step:SetPoint("TOPRIGHT", b, "TOPRIGHT", -5, y + 2)
     if step.SetNormalFontObject then
       step:SetNormalFontObject("GameFontNormalSmall")
@@ -342,6 +346,7 @@ local function CreateNode(canvas)
   local function Stepper(text, x, key)
     local s = CreateFrame("Button", nil, b, "UIPanelButtonTemplate")
     s:SetSize(19, 15)
+    ns.Skin.Button(s, 15)
     s:SetPoint("TOPRIGHT", b, "TOPRIGHT", x, -62)
     s:SetText(text)
     if s.SetMotionScriptsWhileDisabled then s:SetMotionScriptsWhileDisabled(true) end
@@ -454,9 +459,16 @@ local function FillNode(b, node, isCenter)
     b.less:Hide()
     b.more:Hide()
   end
-  if isCenter then
+  if b.centreGlow then b.centreGlow:SetShown(isCenter and true or false) end
+  if isCenter and b.centreGlow then
+    b:SetBackdropBorderColor(0.5, 0.8, 1, 1)
+    b:SetBackdropColor(0.04, 0.07, 0.11, 0.97)
+  elseif isCenter then
     b:SetBackdropBorderColor(1, 0.82, 0, 1)
     b:SetBackdropColor(0.16, 0.12, 0.04, 0.97)
+  elseif ns.Skin.On() then
+    b:SetBackdropBorderColor(0.42 + r * 0.25, 0.38 + g * 0.25, 0.3 + bl * 0.25, 0.85)
+    b:SetBackdropColor(0.035, 0.04, 0.05, 0.93)
   else
     b:SetBackdropBorderColor(0.55 + r * 0.2, 0.5 + g * 0.2, 0.42 + bl * 0.2, 0.9)
     b:SetBackdropColor(0.07, 0.06, 0.05, 0.95)
@@ -555,7 +567,16 @@ function V.Create(parent)
   local bg = view:CreateTexture(nil, "BACKGROUND")
   bg:SetAllPoints()
   local hasAtlas = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo("auctionhouse-background-index")
-  if hasAtlas then
+  if ns.Skin.On() then
+    -- The stone shows through, with a faint arcane circle in the middle.
+    bg:SetColorTexture(0.02, 0.025, 0.03, 0.35)
+    local sigil = view:CreateTexture(nil, "BACKGROUND", nil, 2)
+    sigil:SetTexture(ns.Skin.Tex("cg-sigil"))
+    sigil:SetSize(600, 600)
+    sigil:SetPoint("CENTER", view, "CENTER", 0, -10)
+    sigil:SetVertexColor(0.6, 0.78, 1, 0.16)
+    view.sigil = sigil
+  elseif hasAtlas then
     bg:SetAtlas("auctionhouse-background-index")
     local shade = view:CreateTexture(nil, "BACKGROUND", nil, 1)
     shade:SetAllPoints()
@@ -572,7 +593,7 @@ function V.Create(parent)
   view.nodes, view.lines, view.labels = {}, {}, {}
 
   local function Header(point, x, text)
-    local fs = view:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    local fs = view:CreateFontString(nil, "OVERLAY", ns.Skin.Font(17, "GameFontNormal"))
     fs:SetPoint(point, x, -8)
     fs:SetText(text)
     fs:SetAlpha(0.85)
@@ -583,6 +604,7 @@ function V.Create(parent)
   -- How the cards are ranked, and how much may be bought at auction.
   local rankButton = CreateFrame("Button", nil, view, "UIPanelButtonTemplate")
   rankButton:SetSize(128, 19)
+  ns.Skin.Button(rankButton, 19)
   rankButton:SetPoint("TOP", -150, -5)
   rankButton:SetScript("OnClick", function()
     ns.settings.rankBy = (ns.settings.rankBy == "craft") and "total" or "craft"
@@ -739,7 +761,8 @@ end
 -- refit: recentre and rescale so the whole graph is visible.
 function V.SetGraph(view, graph, refit)
   local canvas = view.canvas
-  local nNode, nLine, nLabel = 0, 0, 0
+  local nNode, nLine, nLabel, nGlow = 0, 0, 0, 0
+  view.glows = view.glows or {}
   view.graph = graph
   if view.ShowRatio then view.ShowRatio() end
   -- Zoomed out, cards and line labels carry less, so that they can be read.
@@ -804,6 +827,27 @@ function V.SetGraph(view, graph, refit)
         if lean and lean >= 0.3 and ns.settings.flowGlow ~= false then
           view.flows[#view.flows + 1] = { x1 = x1, y1 = y1, x2 = x2, y2 = y2, strength = lean, share = share,
             offset = ((e.from * 7 + e.to * 13) % 100) / 100 }
+        end
+        -- With the addon's look, a line that matters glows softly: a wide
+        -- faint copy under it.
+        local glow = ns.Skin.On() and (e.chosen or (lean and lean >= 0.3))
+        if glow then
+          local gx, gy = x1, y1
+          for s = 1, SEGMENTS do
+            local x, y = Bezier(x1, y1, x2, y2, s / SEGMENTS)
+            nGlow = nGlow + 1
+            local line = view.glows[nGlow]
+            if not line then
+              line = canvas:CreateLine(nil, "BACKGROUND", nil, -1)
+              view.glows[nGlow] = line
+            end
+            line:SetColorTexture(r, g, bl, alpha * 0.2)
+            line:SetThickness(thick * 3.5)
+            line:SetStartPoint("CENTER", canvas, gx, gy)
+            line:SetEndPoint("CENTER", canvas, x, y)
+            line:Show()
+            gx, gy = x, y
+          end
         end
         local px, py = x1, y1
         for s = 1, SEGMENTS do
@@ -922,6 +966,7 @@ function V.SetGraph(view, graph, refit)
     view.nodes[i].node = nil
   end
   for i = nLine + 1, #view.lines do view.lines[i]:Hide() end
+  for i = nGlow + 1, #view.glows do view.glows[i]:Hide() end
   for i = nLabel + 1, #view.labels do view.labels[i]:Hide() end
   V.Animate(view)
 end

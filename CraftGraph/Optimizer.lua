@@ -1005,7 +1005,7 @@ end
 -- Own stock is what is in the bags plus, unless switched off, the bank; what
 -- has to come out of the bank is listed in `bank`, and everything taken
 -- from own stock in `own`.
-function J.Needs(id, qty, inv, ord, use)
+function J.Needs(id, qty, inv, ord, use, goal)
   inv = inv or {}
   ord = ord or {}
   inv.total = inv.total or {}
@@ -1016,6 +1016,9 @@ function J.Needs(id, qty, inv, ord, use)
   local n = { id = id, qty = qty, ah = {}, mail = {}, vendor = {}, missing = {}, crafts = {},
     bank = {}, own = {} }
   local useLeft = {}
+  local function add(tbl, item, k)
+    tbl[item] = (tbl[item] or 0) + k
+  end
   local function have(item)
     if inv.total[item] == nil then
       local bags = ItemCount(item)
@@ -1039,15 +1042,31 @@ function J.Needs(id, qty, inv, ord, use)
     return k - used
   end
   if qty <= 0 then return n end
+  -- A trade (relist, sell to a vendor, buy from one) buys the item itself
+  -- at what the trade was planned for; only crafting makes it.
+  if goal and goal.kind ~= "craft" then
+    local bought = goal.kind == "fromvendor" and "vendor" or "ah"
+    n.plan = { item = id, qty = qty, produced = qty, craftable = false, complete = true, casts = {},
+      buy = bought == "ah" and { [id] = goal.qty or qty } or {},
+      buyCost = bought == "ah" and goal.outlay and { [id] = goal.outlay } or {},
+      vend = bought == "vendor" and { [id] = qty } or {}, vendCost = {}, missing = {}, short = {}, guess = {} }
+    add(n[bought], id, qty)
+    if bought == "ah" then
+      if ord[id] == nil then ord[id] = Ordered()[id] or 0 end
+      local m = min(qty, ord[id])
+      if m > 0 then
+        ord[id] = ord[id] - m
+        n.mail[id] = m
+        n.ah[id] = qty - m > 0 and qty - m or nil
+      end
+    end
+    return n
+  end
   local plan = O.Plan(id, qty)
   n.plan = plan
   local buyLeft = {}
   for item, k in pairs(plan.buy) do buyLeft[item] = k end
   local craftIndex = {}
-
-  local function add(tbl, item, k)
-    tbl[item] = (tbl[item] or 0) + k
-  end
 
   local function expand(item, k, depth, top)
     local short = top and k or take(item, k)
@@ -1250,16 +1269,80 @@ function J.Steps(id, qty, job)
   return steps
 end
 
+-- What a planned item costs and brings, for each unit and in all:
+--   cost      what the plan's steps cost when nothing is held yet
+--   toSpend   what the steps still open will cost (auction and vendors)
+--   sellEach  what one unit brings when sold, after the auction house cut
+--   income    sellEach for every unit made; profit = income - cost
+--   trade     bought rather than made; toVendor: sold to a vendor, no cut
+-- `units` can be more than asked for when a recipe makes several at once.
+-- Any figure is nil when no price is known for it.
+local ZERO = { __index = function() return 0 end }
+
+-- Every step of a planned item as if nothing were held or done yet.
+local function WholeSteps(job)
+  local pin = job.pin
+  local whole = J.Needs(pin.id, pin.qty, { total = setmetatable({}, ZERO), bags = setmetatable({}, ZERO) },
+    setmetatable({}, ZERO), pin.use, pin.goal)
+  return J.Steps(nil, nil, { needs = whole, remaining = pin.qty, inBags = 0, pin = pin, kind = "none" })
+end
+
+function J.Money(job)
+  local pin = job.pin
+  local cut = ns.settings and ns.settings.cut or 0.05
+  local m = { qty = pin.qty, units = pin.qty, toSpend = 0,
+    trade = pin.goal and pin.goal.kind ~= "craft" or false, toVendor = pin.goal and pin.goal.kind == "tovendor" or false }
+  for _, step in ipairs(J.Steps(nil, nil, job)) do
+    if step.cost then m.toSpend = m.toSpend + step.cost end
+  end
+  -- The same route as the steps, so what is left never exceeds the whole.
+  local cost = 0
+  for _, step in ipairs(WholeSteps(job)) do
+    if step.kind == "stuck" then cost = nil break end
+    if step.cost then cost = cost + step.cost end
+  end
+  m.cost = cost
+  local goal = pin.goal
+  if goal then
+    m.cost = m.cost or goal.outlay
+    if goal.sellEach then
+      m.sellEach = goal.kind == "tovendor" and goal.sellEach or goal.sellEach * (1 - cut)
+    end
+  else
+    local e = O.Evaluate(pin.id, pin.qty)
+    m.units = max(pin.qty, e.produced or pin.qty)
+    m.sellEach = e.unitSale
+  end
+  if m.sellEach then m.income = m.sellEach * m.units end
+  if m.cost then m.costEach = m.cost / max(m.units, 1) end
+  if m.cost and m.income then m.profit = m.income - m.cost end
+  return m
+end
+
+-- The same for the whole plan. `unknown` counts the items with no cost or
+-- no sale price, which the sums leave out.
+function J.MoneyAll(jobs)
+  local all = { cost = 0, toSpend = 0, income = 0, profit = 0, unknown = 0, items = {} }
+  for _, job in ipairs(jobs or J.All()) do
+    local m = J.Money(job)
+    all.items[#all.items + 1] = m
+    all.toSpend = all.toSpend + m.toSpend
+    if m.profit then
+      all.cost, all.income, all.profit = all.cost + m.cost, all.income + m.income, all.profit + m.profit
+    else
+      all.unknown = all.unknown + 1
+    end
+  end
+  return all
+end
+
 -- The steps of a planned item that are finished: those the whole plan has
 -- (worked out as if nothing were held) that are no longer open. Something
 -- half done stays open with what is left.
-local ZERO = { __index = function() return 0 end }
 function J.StepsDone(job)
   local pin = job and job.pin
   if not pin then return {} end
-  local whole = J.Needs(pin.id, pin.qty, { total = setmetatable({}, ZERO), bags = setmetatable({}, ZERO) },
-    setmetatable({}, ZERO), pin.use)
-  local all = J.Steps(nil, nil, { needs = whole, remaining = pin.qty, inBags = 0, pin = pin, kind = "none" })
+  local all = WholeSteps(job)
   local open = {}
   for _, step in ipairs(J.Steps(nil, nil, job)) do open[step.key] = true end
   local done = {}
@@ -1391,7 +1474,7 @@ function J.All()
   for _, pin in ipairs(PinList()) do
     local inBags = ItemCount(pin.id)
     local remaining = max(0, pin.qty - (pin.posted or 0) - inBags)
-    local needs = J.Needs(pin.id, remaining, inv, ord, pin.use)
+    local needs = J.Needs(pin.id, remaining, inv, ord, pin.use, pin.goal)
     local text, kind = J.Status(needs, remaining, inBags, pin.posted)
     out[#out + 1] = { pin = pin, needs = needs, remaining = remaining, inBags = inBags,
       text = text, kind = kind }

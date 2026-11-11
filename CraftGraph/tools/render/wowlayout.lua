@@ -45,6 +45,26 @@ local FONTS = {
 }
 local COIN = { gold = "#f2c230", silver = "#c8ccd4", copper = "#c9783c" }
 
+-- Font objects made by the addon. A serif from the game (MORPHEUS) is drawn
+-- with a serif here.
+function CreateFont(name)
+  local f = { _name = name }
+  function f:SetFont(path, size)
+    self._path, self._size = path, size
+    FONTS[name] = { size = size, color = { 1, 0.82, 0.35 },
+      family = tostring(path):upper():find("MORPHEUS") and "Noto Serif, DejaVu Serif, serif" or nil }
+    return true
+  end
+  function f:GetFont() return self._path, self._size end
+  function f:SetTextColor(r, g, b)
+    if FONTS[name] then FONTS[name].color = { r, g, b } end
+  end
+  function f.SetShadowColor() end
+  function f.SetShadowOffset() end
+  _G[name] = f
+  return f
+end
+
 -- Splits game text into runs: { text, color } or { coin = kind }.
 local function Runs(text, base)
   local runs, color = {}, base
@@ -267,7 +287,16 @@ function W:SetStartPoint(relPoint, relTo, x, y) self._startPoint = { relPoint, r
 function W:SetEndPoint(relPoint, relTo, x, y) self._endPoint = { relPoint, relTo, x or 0, y or 0 } end
 function W:SetThickness(t) self._thick = t end
 function W:SetColorTexture(r, g, b, a) self._color, self._texture, self._atlas = { r, g, b, a or 1 }, nil, nil end
-function W:SetTexture(t) self._texture, self._color = t, nil end
+function W:SetTexture(t, wrapH, wrapV)
+  self._texture, self._color = t, nil
+  self._tileH, self._tileV = wrapH == "REPEAT" or nil, wrapV == "REPEAT" or nil
+end
+function W:SetHorizTile(on) self._tileH = on or nil end
+function W:SetVertTile(on) self._tileV = on or nil end
+function W:SetBlendMode(m) self._blend = m end
+function W:SetDesaturated(d) self._desat = d or nil end
+function W:GetObjectType() return self._kind end
+function W:GetRegions() return unpack(self._regions) end
 function W:SetAtlas(a) self._atlas, self._color = a, nil end
 function W:SetTexCoord(...) self._coord = { ... } end
 function W:SetVertexColor(r, g, b, a) self._vertex = { r, g, b, a or 1 } end
@@ -559,6 +588,16 @@ local function esc(s) return (s:gsub("&", "&amp;"):gsub("<", "&lt;"):gsub(">", "
 local H                                     -- canvas height, to flip y
 local defs, defN
 
+-- The pixel size of the addon's own textures, for tiling.
+local SIZES = {}
+do
+  local f = io.open(here .. "/icons/sizes.lua", "r")
+  if f then
+    f:close()
+    SIZES = dofile(here .. "/icons/sizes.lua")
+  end
+end
+
 -- Icons: tools/render/icons/<fileID or name>.png if present, else a tile.
 local iconCache = {}
 wow.missingIcons = {}
@@ -623,8 +662,50 @@ local function DrawTexture(r, rect, alpha)
   end
   local data = IconData(tex)
   if data then
-    emit(string.format('<image x="%.2f" y="%.2f" width="%.2f" height="%.2f" opacity="%.2f" preserveAspectRatio="none" href="data:image/png;base64,%s"/>',
-      x, y, w, h, alpha, data))
+    local key = name:gsub("^.*[/\\]", ""):lower()
+    local size = SIZES[key]
+    local v = r._vertex
+    alpha = alpha * (v and v[4] or 1)
+    -- A tint (the vertex colour) and greying, as a filter.
+    local filter = ""
+    if r._desat or (v and (v[1] < 0.999 or v[2] < 0.999 or v[3] < 0.999)) then
+      defN = defN + 1
+      local tr, tg, tb = v and v[1] or 1, v and v[2] or 1, v and v[3] or 1
+      defs[#defs + 1] = string.format('<filter id="t%d" color-interpolation-filters="sRGB">%s<feColorMatrix type="matrix" values="%.3f 0 0 0 0 0 %.3f 0 0 0 0 0 %.3f 0 0 0 0 0 1 0"/></filter>',
+        defN, r._desat and '<feColorMatrix type="saturate" values="0"/>' or "", tr, tg, tb)
+      filter = string.format(' filter="url(#t%d)"', defN)
+    end
+    local blend = r._blend == "ADD" and ' style="mix-blend-mode:screen"' or ""
+    local href = "data:image/png;base64," .. data
+    if (r._tileH or r._tileV) and size then
+      defN = defN + 1
+      defs[#defs + 1] = string.format('<pattern id="p%d" patternUnits="userSpaceOnUse" x="%.2f" y="%.2f" width="%d" height="%d"><image width="%d" height="%d" href="%s"/></pattern>',
+        defN, x, y, size[1], size[2], size[1], size[2], href)
+      emit(string.format('<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" fill="url(#p%d)" opacity="%.3f"%s%s/>',
+        x, y, w, h, defN, alpha, filter, blend))
+      return
+    end
+    local c = r._coord
+    local u0, u1, v0, v1 = 0, 1, 0, 1
+    if c and #c == 4 then
+      u0, u1, v0, v1 = c[1], c[2], c[3], c[4]
+    elseif c and #c == 8 then
+      u0, v0, u1, v1 = c[1], c[2], c[7], c[8]
+    end
+    if u0 == 0 and u1 == 1 and v0 == 0 and v1 == 1 then
+      emit(string.format('<image x="%.2f" y="%.2f" width="%.2f" height="%.2f" opacity="%.3f" preserveAspectRatio="none"%s%s href="%s"/>',
+        x, y, w, h, alpha, filter, blend, href))
+      return
+    end
+    -- Only part of the picture, perhaps mirrored: place the whole picture
+    -- so that part lands on the rectangle, and clip to it.
+    local a, d = w / (u1 - u0), h / (v1 - v0)
+    defN = defN + 1
+    defs[#defs + 1] = string.format('<clipPath id="c%d"><rect x="%.2f" y="%.2f" width="%.2f" height="%.2f"/></clipPath>', defN, x, y, w, h)
+    -- (The tint goes on the image itself: on the clipped group the SVG
+    -- renderer drops it.)
+    emit(string.format('<g clip-path="url(#c%d)"%s><image%s transform="matrix(%.4f 0 0 %.4f %.3f %.3f)" width="1" height="1" opacity="%.3f" preserveAspectRatio="none" href="%s"/></g>',
+      defN, blend, filter, a, d, x - u0 * a, y - v0 * d, alpha, href))
   else
     -- A stand-in tile, tinted by the texture's identity.
     local n = 0
@@ -635,7 +716,8 @@ local function DrawTexture(r, rect, alpha)
   end
 end
 
-local function DrawLines(lines, x, yTop, width, size, lineH, justify, alpha)
+local function DrawLines(lines, x, yTop, width, size, lineH, justify, alpha, family)
+  local fam = family and string.format(' font-family="%s"', family) or ""
   for i, line in ipairs(lines) do
     local lx = x
     if justify == "RIGHT" then lx = x + width - line.width elseif justify == "CENTER" then lx = x + (width - line.width) / 2 end
@@ -646,8 +728,8 @@ local function DrawLines(lines, x, yTop, width, size, lineH, justify, alpha)
           lx + size * 0.5, baseline - size * 0.33, size * 0.38, COIN[run.coin] or "#fff", alpha))
         lx = lx + size * 1.05
       elseif run.text and run.text ~= "" then
-        emit(string.format('<text x="%.2f" y="%.2f" font-size="%.2f" fill="%s" fill-opacity="%.2f" xml:space="preserve">%s</text>',
-          lx, baseline, size, rgb(run.color), alpha, esc(run.text)))
+        emit(string.format('<text x="%.2f" y="%.2f" font-size="%.2f" fill="%s" fill-opacity="%.2f"%s xml:space="preserve">%s</text>',
+          lx, baseline, size, rgb(run.color), alpha, fam, esc(run.text)))
         lx = lx + TextWidth(run.text, size)
       end
     end
@@ -661,7 +743,9 @@ local function DrawFontString(r, rect, alpha, scale)
   local extra = rect.h - height * scale
   if r._justifyV == "BOTTOM" then yTop = yTop + extra elseif r._justifyV ~= "TOP" then yTop = yTop + extra / 2 end
   emit(string.format('<g transform="translate(%.2f %.2f) scale(%.4f)">', rect.l, yTop, scale))
-  DrawLines(lines, 0, 0, rect.w / scale, size, lineH, r._justifyH or "LEFT", alpha * (r._tcolor and r._tcolor[4] or 1))
+  local font = FONTS[r._font]
+  DrawLines(lines, 0, 0, rect.w / scale, size, lineH, r._justifyH or "LEFT", alpha * (r._tcolor and r._tcolor[4] or 1),
+    font and font.family)
   emit("</g>")
 end
 
@@ -744,7 +828,7 @@ local function DrawFrame(f, alpha)
       defN, rect.l, H - rect.b - rect.h, rect.w, rect.h)
     emit(string.format('<g clip-path="url(#c%d)">', defN))
   end
-  DrawChrome(f, rect, alpha, scale)
+  if not f.cgSkin then DrawChrome(f, rect, alpha, scale) end
   local regions = {}
   for _, r in ipairs(f._regions) do regions[#regions + 1] = r end
   table.sort(regions, function(a, b)
@@ -764,6 +848,11 @@ local function DrawFrame(f, alpha)
         DrawLine(r, ra)
       end
     end
+  end
+  if f.cgSkin == "button" then
+    local x, y, w, h = rect.l, H - rect.b - rect.h, rect.w, rect.h
+    local on = f._enabled ~= false
+    CenterText(f._text or "", x, y, w, h, 11.5 * scale, f.cgLit and "#ffe9a8" or (on and "#ffd100" or "#7f7f7f"), alpha)
   end
   for _, c in ipairs(f._children) do
     if c._strata ~= "DIALOG" then DrawFrame(c, alpha) end

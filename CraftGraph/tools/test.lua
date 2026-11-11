@@ -900,6 +900,17 @@ do
   local hudRow
   for _, f in ipairs(frames) do if f.job and f.shown then hudRow = f end end
   check(hudRow ~= nil, "the tracker has a row for the pin")
+  local money = J.Money(hudRow.job)
+  check(money.cost and money.costEach and math.abs(money.costEach * money.units - money.cost) < 0.01,
+    "the plan knows what one costs to make and what all of them cost")
+  check(money.sellEach and math.abs(money.income - money.sellEach * money.units) < 0.01
+    and math.abs(money.profit - (money.income - money.cost)) < 0.01, "and what one and all of them bring")
+  check(money.toSpend > 0 and money.toSpend <= money.cost + 0.01, "what is still to spend is the open steps' cost")
+  check(hudRow.status.text:find("Each", 1, true) and hudRow.status.text:find("All " .. money.units, 1, true),
+    "the row names the money each and in all: " .. hudRow.status.text)
+  local whole = J.MoneyAll()
+  check(CraftGraphHUD.total.text:find("Whole plan", 1, true) and CraftGraphHUD.total.text:find(ns.Money(whole.toSpend), 1, true)
+    and CraftGraphHUD.total.text:find(ns.Money(whole.income), 1, true), "the plan window sums the whole plan: " .. CraftGraphHUD.total.text)
   hudRow.scripts.OnEnter(hudRow)
   hudRow.scripts.OnClick(hudRow, "LeftButton")
   check(ns.settings.lastItem == r[3] and ns.settings.qty == 3, "clicking it opens that item's graph at its quantity")
@@ -1111,6 +1122,15 @@ do
     local st = J.TrackStats(pin)
     check(st and st.n == 1 and near(st.first, d.profit, 1), "the plan starts a profit history")
     check(ns.UI.GoalText(pin):find("Profit", 1, true) ~= nil, "the plan window shows the projected profit")
+    local tradeJob
+    for _, j in ipairs(J.All()) do if j.pin.id == d.id then tradeJob = j end end
+    local tradeKinds = {}
+    for i, st in ipairs(J.Steps(nil, nil, tradeJob)) do tradeKinds[i] = st.kind end
+    check(table.concat(tradeKinds, " ") == "ah mail sell" and tradeJob.needs.ah[d.id] == d.qty,
+      "a trade buys the item itself and crafts nothing (" .. table.concat(tradeKinds, " ") .. ")")
+    local tradeMoney = J.Money(tradeJob)
+    check(near(tradeMoney.cost, d.outlay, 1) and near(tradeMoney.toSpend, d.outlay, 1) and near(tradeMoney.profit, d.profit, 1),
+      "its money is the trade's: outlay, still to spend and profit")
     -- The cheap listings get dearer: the next scan corrects the projection.
     local ladderBefore = M.Info(d.id).ladder[1]
     now = now + 300

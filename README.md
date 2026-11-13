@@ -16,6 +16,16 @@ own interface code, outside the game, on a simulated market unless they say "rea
 
 ## What you can do with it
 
+**Read the market news.** What moved over the day and the week: the biggest single moves, each
+kind of goods, and every profession by rank (Apprentice to Master), materials and goods apart.
+Up or down is said only when it is three chances in four; otherwise "steady" or "unclear".
+
+![The market news](docs/media/news.png)
+
+It comes with two days of prices from its author's own scans of CAMWOW EU4 Realm 2 PvP
+(Alliance), so on that auction house the news and the estimates have something to go on from your
+first login. Your own scans always come first; [more about the base data](docs/understand/data-sources.md#the-base-data).
+
 **See what anything is made of.** Click an item and you get a map: what it is made from on the
 right, what it is used in on the left, with the price of every step and buttons to buy, make and
 sell. Gold lines earn, red ones lose, thicker ones earn more, and small lights drift the way

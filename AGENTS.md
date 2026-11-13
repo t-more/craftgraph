@@ -6,7 +6,8 @@ things, not the details. Look those up in `docs/` and in the code.
 
 ## What it is
 A World of Warcraft Forever addon that helps a player make gold at the auction house: what an
-item is made of, every way to profit now, plans that follow the market, and when to sell.
+item is made of, every way to profit now, plans that follow the market, when to sell, and the
+day's market news.
 Lua 5.1, the game's modern auction interface. Opened in game with `/cg`.
 
 ## Who it is for
@@ -54,6 +55,9 @@ the human judge the effort. Friends get it as a zip, so it must work from the zi
 ## Legal footing
 - A prototype among friends, given as is; each user answers for their own use. `LEGAL.md` says
   so, and the tool and the in-game Blizzard page repeat the main points with a link to the terms.
+- The base data shipped in the addon (`Data/Base.lua`) is the author's own scans only, without
+  seller or character names, cleaned of part scans. Never Blizzard's data, not even averaged:
+  their terms forbid passing on "aggregate or derived data" too, and a zip outlives 30 days.
 - An API key is personal: one private file on the user's computer, never in the addon folder, the
   repository, a zip, an export or an upload. Data from Blizzard's service is never passed on, and
   the user is reminded to delete it after 30 days (a button and `purge`); we do not delete

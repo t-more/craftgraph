@@ -27,6 +27,16 @@ What it does
   how listings are stacked, who sells it, and whether it is rising or falling.
   These fill in as you scan at different times.
 
+  News (/cg news): what moved over the day and the week, by kind of goods and
+  by profession and rank (Apprentice to Master), materials and goods apart.
+
+  Base data: two days of the author's own scans of CAMWOW EU4 Realm 2 PvP
+  (Alliance) come with it, so on that auction house you have history from the
+  start. Your own scans always come first; it has its own switch on the Data
+  sources page. No seller or character names, none of Blizzard's data.
+
+  After installing this version, restart the game fully once (a new file).
+
 Your responsibility
   CraftGraph is a prototype made by a few friends, given as it is, with no
   warranty. How you use it is your own decision and your own responsibility:

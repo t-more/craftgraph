@@ -794,6 +794,15 @@ local function DrawTooltip()
   if tip._anchor == "ANCHOR_TOP" then x, y = owner.l, H - owner.b - owner.h - height - 4 end
   if tip._anchor == "ANCHOR_LEFT" then x = owner.l - width - 6 end
   if wow.cursor and (tip._anchor == "ANCHOR_RIGHT" or tip._anchor == nil) then x, y = wow.cursor[1] + 18, H - wow.cursor[2] + 10 end
+  -- ANCHOR_NONE with a point of its own: its TOPRIGHT or TOPLEFT on another frame's corner.
+  local p = tip._anchor == "ANCHOR_NONE" and tip._points and tip._points[1]
+  if p and p.relTo and (p.point == "TOPRIGHT" or p.point == "TOPLEFT") then
+    local r = Rect(p.relTo)
+    local rx = (p.relPoint:find("RIGHT") and r.l + r.w) or (p.relPoint:find("LEFT") and r.l) or (r.l + r.w / 2)
+    local ry = (p.relPoint:find("TOP") and r.b + r.h) or (p.relPoint:find("BOTTOM") and r.b) or (r.b + r.h / 2)
+    x = rx + (p.x or 0) - (p.point == "TOPRIGHT" and width or 0)
+    y = H - (ry + (p.y or 0))
+  end
   x = max(4, min(UIParent._w - width - 4, x))
   y = max(4, min(H - height - 4, y))
   Box(x, y, width, height, "#0b0a12", 0.96, "#b8b8c8", 0.9, 5, 1.2)

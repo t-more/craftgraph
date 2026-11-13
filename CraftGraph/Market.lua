@@ -414,10 +414,24 @@ function M.Record(id, raw, opts)
 end
 
 -- The hour-of-day ("hd") or weekday ("wd") tally with the most behind it:
--- the player's own scans or the online data.
+-- the player's own scans (with the base data's from before them) or the
+-- online data.
 function M.Tally(id, which)
   local it = ItemRecord(id, false)
   local own = it and it[which]
+  local base = M.BaseTally(id, which)
+  if base then
+    -- The two cover different times, so their sums simply add.
+    local sum = {}
+    for _, tally in ipairs({ base, own or {} }) do
+      for key, c in pairs(tally) do
+        local s = sum[key] or { 0, 0, 0 }
+        s[1], s[2], s[3] = s[1] + c[1], s[2] + c[2], s[3] + c[3]
+        sum[key] = s
+      end
+    end
+    own = sum
+  end
   local on = M.Online(id)
   local online = on and on[which]
   local function scans(tally)
@@ -573,6 +587,181 @@ function M.Online(id)
   local shared = M.Shared(id)
   if shared and (not on or (shared.t or 0) > (on.t or 0)) then return shared, meta end
   return on, meta
+end
+
+------------------------------------------------------------------------------
+-- Base data: what the addon's author scanned on one auction house, shipped
+-- in Data/Base.lua so that a new install there starts with some history:
+-- prices, depth, how listings are stacked and how fast things sold. It is
+-- the author's own scans only (never Blizzard's data, which may not be
+-- passed on, not even averaged) and holds no seller or character names.
+--
+-- It is history, not the here and now: it is used only on that auction
+-- house, and for each item only for the time before the player's own first
+-- record of it. On the author's own install it therefore changes nothing.
+-- Packed by tools/make_base.lua; tools/basepack.lua describes the format.
+------------------------------------------------------------------------------
+local BASE_STEP, BASE_SLOT = math.log(1.002), 300
+local baseLetter = {}
+do
+  local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+  for i = 1, 64 do baseLetter[alphabet:byte(i)] = i - 1 end
+end
+
+-- One item's packed string to a record shaped like the player's own:
+-- h (time, cheapest, sturdier, units per point), l, lt, ln, ls, bs, sa, sc, sb, sf.
+local function BaseUnpack(s, t0)
+  local pos, len, byte, exp = 1, #s, string.byte, math.exp
+  local function Uint()
+    local v, scale = 0, 1
+    while pos <= len do
+      local d = baseLetter[byte(s, pos)]
+      if not d then error("unknown letter at " .. pos) end
+      pos = pos + 1
+      if d < 32 then return v + d * scale end
+      v, scale = v + (d - 32) * scale, scale * 32
+    end
+    error("cut short")
+  end
+  local function Int()
+    local v = Uint()
+    if v % 2 == 0 then return v / 2 end
+    return -(v + 1) / 2
+  end
+  local function Price(q) return floor(exp(q * BASE_STEP) + 0.5) end
+
+  local rec = { h = {} }
+  local flags = Uint()
+  local h, slot, units, q = rec.h, 0, 0, 0
+  for i = 1, Uint() do
+    slot = slot + Uint()
+    units = units + Int()
+    local n = #h
+    h[n + 1] = t0 + slot * BASE_SLOT
+    if units > 0 then
+      q = q + Int()
+      h[n + 2], h[n + 3], h[n + 4] = Price(q), Price(q + Uint()), units
+    else
+      h[n + 2], h[n + 3], h[n + 4] = 0, 0, 0
+    end
+  end
+  if flags % 16 >= 8 then
+    rec.lt = t0 + Uint() * BASE_SLOT
+    local l, lq, sum = {}, 0, 0
+    for i = 1, Uint() do
+      lq = lq + Uint()
+      local n = Uint()
+      l[#l + 1], l[#l + 2] = Price(lq), n
+      sum = sum + n
+    end
+    rec.l, rec.ln = l, sum + Uint()
+    rec.ls = flags % 2 == 1 or nil
+  end
+  if flags % 8 >= 4 then
+    local bs = {}
+    for i = 1, Uint() do
+      bs[#bs + 1] = Uint()
+      bs[#bs + 1] = Uint() / 10
+    end
+    rec.bs = bs
+  end
+  if flags % 4 >= 2 then
+    rec.sa, rec.sc, rec.sb, rec.sf = Uint() / 10, Uint() / 10, Uint() / 10000, Uint() / 100
+  end
+  return rec
+end
+M.BaseUnpack = BaseUnpack
+
+-- The base data when it is for this auction house and switched on, else
+-- nil and why not: "none", "elsewhere" or "off".
+function M.BaseMeta()
+  local b = ns.Base
+  if not (b and b.items and b.t0) then return nil, "none" end
+  if b.realm ~= ns.realmKey then return nil, "elsewhere" end
+  if not M.Source("Base") then return nil, "off" end
+  return b
+end
+
+-- Unpacked records are let go when memory is short (every item unpacked
+-- at once would take megabytes); they are cheap to unpack again.
+local baseCache, baseBroken = setmetatable({}, { __mode = "v" }), false
+-- The whole base record of an item (unpacked once), or nil.
+local function BaseRecord(id)
+  local b = M.BaseMeta()
+  local s = b and b.items[id]
+  if not s then return nil end
+  local rec = baseCache[id]
+  if rec == nil then
+    local ok, got = pcall(BaseUnpack, s, b.t0)
+    if not ok and not baseBroken then
+      baseBroken = true
+      ns.Log("ERROR base data for item " .. tostring(id) .. " could not be read: " .. tostring(got))
+    end
+    rec = ok and got or false
+    baseCache[id] = rec
+  end
+  return rec or nil
+end
+
+-- When the player's own record of an item begins (its first point), or nil.
+local function OwnFirst(it)
+  if not it then return nil end
+  local h = M.History(it)
+  return h[1]
+end
+
+-- The base record of an item, cut to the time before the player's own
+-- first record of it: h holds only the points before then, and the rest
+-- (ladder, stacks, sales) only when the whole of the base came before.
+-- nil when nothing of it is left.
+function M.Base(id)
+  local rec = BaseRecord(id)
+  if not rec then return nil end
+  local first = OwnFirst(ItemRecord(id, false))
+  if not first then return rec end
+  local h = {}
+  for i = 1, #rec.h, 4 do
+    if rec.h[i] >= first - HISTORY_MERGE_SECONDS then break end
+    h[#h + 1], h[#h + 2], h[#h + 3], h[#h + 4] = rec.h[i], rec.h[i + 1], rec.h[i + 2], rec.h[i + 3]
+  end
+  if not h[1] then return nil end
+  if ns.Base.to < first then return rec end
+  return { h = h }
+end
+
+-- Every item the base data holds, as a set of item ids (empty when it is
+-- not used here).
+function M.BaseItems()
+  local b = M.BaseMeta()
+  return b and b.items or {}
+end
+
+-- The hour-of-day ("hd") and weekday ("wd") tallies the player's own scans
+-- would have made of the base points, by the player's clock: the same
+-- sums as RecordPatterns, one a half hour at most, complete ladders only.
+local baseTallies = setmetatable({}, { __mode = "k" })
+function M.BaseTally(id, which)
+  local rec = M.Base(id)
+  if not rec or rec.ls then return nil end
+  local c = baseTallies[rec]
+  if not c then
+    c = { hd = {}, wd = {} }
+    local e, pt
+    local h = rec.h
+    for i = 1, #h, 4 do
+      local t, robust = h[i], h[i + 2]
+      if robust > 0 and (not pt or t - pt >= PATTERN_GAP) then
+        pt = t
+        local logPrice = math.log(robust)
+        local rel = e and (logPrice - e) or 0
+        e = e and (e + 0.2 * (logPrice - e)) or logPrice
+        Tally(c.hd, tonumber(date("%H", t)) or 0, rel, h[i + 3])
+        Tally(c.wd, tonumber(date("%w", t)) or 0, rel, h[i + 3])
+      end
+    end
+    baseTallies[rec] = c
+  end
+  return next(c[which]) and c[which] or nil
 end
 
 ------------------------------------------------------------------------------
@@ -1187,7 +1376,12 @@ function M.SalesPrior()
       units, events = units + (it.sa or 0), events + (it.sc or 0)
     end
   end
-  if #shares < M.SALES_PRIOR_MIN_ITEMS then
+  local base = M.BaseMeta()
+  if #shares < M.SALES_PRIOR_MIN_ITEMS and base and base.salesPrior then
+    -- Too little watched here yet: what this market did in the base data.
+    local bp = base.salesPrior
+    salesPrior = { share = bp.share, items = bp.items, days = M.SALES_PRIOR_DAYS, stack = bp.stack, base = true }
+  elseif #shares < M.SALES_PRIOR_MIN_ITEMS then
     salesPrior = false
   else
     table.sort(shares)
@@ -1202,34 +1396,54 @@ end
 -- range it is in with four chances in five, the days of watching behind it
 -- and the units judged sold in that time. nil until two full scans within
 -- twelve hours of each other have been compared.
+-- The base data's belief about how fast an item sells, faded for its age
+-- the way the player's own evidence fades: { sa, sc, sb, sf, ln } or nil.
+-- Only for items whose base came wholly before the player's own record.
+function M.BaseSales(id)
+  local rec = M.Base(id)
+  if not (rec and rec.sb and rec.sb > 0) then return nil end
+  local fade = 0.5 ^ (max(0, time() - ns.Base.to) / 86400 / SALES_HALFLIFE)
+  return { sa = rec.sa * fade, sc = rec.sc * fade, sb = rec.sb * fade, sf = rec.sf, ln = rec.ln }
+end
+
 function M.Sales(id)
+  if not M.Source("Sales") then return nil end
   local it = ItemRecord(id, false)
-  if not it or not it.sb or it.sb <= 0 or not M.Source("Sales") then return nil end
+  local own = it and it.sb and it.sb > 0
+  -- Evidence from the base data, for what it watched before the player did.
+  local base = M.BaseSales(id)
+  if not own and not base then return nil end
+  local sa, sc, sb = own and (it.sa or 0) or 0, own and (it.sc or 0) or 0, own and it.sb or 0
+  if base then sa, sc, sb = sa + base.sa, sc + base.sc, sb + base.sb end
+  local ln = (it and it.ln) or (base and base.ln) or 0
+  local sf = (own and it.sf) or (base and base.sf) or 0
   -- What arrives at random is a sale of one auction, whatever its stack,
   -- so the belief is about auctions a day; units follow from the average
   -- stack that sold.
-  local events = it.sc or 0
+  local events = sc
   -- Where the belief starts: with too little known of this market, a tenth
   -- of a sale in a tenth of a day; otherwise what this market does, which
   -- is to sell a certain share of what is listed each day.
   local prior = M.SalesPrior()
-  local stack = events > 0.01 and (it.sa or 0) / events or (prior and prior.stack or 1)
+  local stack = events > 0.01 and sa / events or (prior and prior.stack or 1)
   local alpha0, beta0 = SALES_PRIOR_UNITS, SALES_PRIOR_DAYS
-  if prior and (it.ln or 0) > 0 then
-    local perDay = min(5000, prior.share * it.ln / max(1, stack))        -- auctions a day
+  if prior and ln > 0 then
+    local perDay = min(5000, prior.share * ln / max(1, stack))        -- auctions a day
     alpha0, beta0 = perDay * prior.days, prior.days
   end
-  local alpha, beta = alpha0 + events, beta0 + it.sb
+  local alpha, beta = alpha0 + events, beta0 + sb
   -- Gamma quantiles by the Wilson-Hilferty cube: good from alpha of 1 up,
   -- rough below, where the range is wide anyway.
   local function Quantile(z)
     local c = 1 - 1 / (9 * alpha) + z / (3 * math.sqrt(alpha))
     return max(0, alpha * c * c * c / beta) * stack
   end
-  return { rate = alpha / beta * stack, lo = Quantile(-1.2816), hi = Quantile(1.2816), days = it.sb,
-    units = it.sa or 0, auctions = events, sellers = it.sq, prior = prior and alpha0 / beta0 * stack or nil,
+  return { rate = alpha / beta * stack, lo = Quantile(-1.2816), hi = Quantile(1.2816), days = sb,
+    units = sa, auctions = events, sellers = own and it.sq or nil, prior = prior and alpha0 / beta0 * stack or nil,
     -- Most of what could sell went between scans: more surely sold unseen.
-    floor = (it.sf or 0) > 0.3 }
+    floor = sf > 0.3,
+    -- Days of watching that came from the base data (faded), when any did.
+    base = base and base.sb or nil }
 end
 
 -- How many sell in a day according to the online data, or nil when it has
@@ -1294,13 +1508,44 @@ function M.Info(id)
     return info
   end
   local price, age = AuctionatorPrice(id)
+  -- Never seen by the player: what the base data saw last, with its age,
+  -- unless Auctionator (the player's own) has something newer.
+  local base = not it and M.Base(id)
+  if base and base.h[1] and (not price or (age and age > now - (base.lt or base.h[#base.h - 3]))) then
+    local h = base.h
+    local info = {
+      ladder = base.l or {}, total = base.ln or 0, age = now - (base.lt or h[#h - 3]),
+      summary = base.ls, source = "scan", base = true, price = base.l and base.l[1] or nil,
+    }
+    local seen = M.Sales(id)
+    if seen and seen.days >= 1 / 24 then
+      info.turnover, info.sales = seen.rate, seen
+      info.soldKnown = seen.days >= 0.5
+    end
+    if not info.price then
+      for i = #h - 3, 1, -4 do
+        if h[i + 1] > 0 then
+          info.lastPrice, info.lastAge = h[i + 1], now - h[i]
+          break
+        end
+      end
+    end
+    return info
+  end
   if price then
     return { price = price, age = age, source = "auctionator", flat = true }
   end
   return nil
 end
 
--- Price history as an array of {time, price} for the price model.
+-- Price history for the price model, the chart and the news, oldest first:
+-- { time, price, units on sale, cheapest, source } per point, where price
+-- is the sturdier price (the average of the cheapest tenth on sale, see
+-- RobustPrice), units and cheapest are there when known, and source is
+-- nil for the player's own scans, else "base", "shared", "online" or
+-- "auctionator" (whose price is the middle of that day's lowest and
+-- highest). It is always an asking price: the game never shows what
+-- anything sold for.
 function M.Series(id)
   local out = {}
   local it = ItemRecord(id, false)
@@ -1310,9 +1555,22 @@ function M.Series(id)
     for i = 1, #h, 4 do
       local price = h[i + 2] > 0 and h[i + 2] or h[i + 1]
       if price > 0 then
-        out[#out + 1] = { h[i], price }
+        out[#out + 1] = { h[i], price, h[i + 3], h[i + 1] }
         first = first or h[i]
       end
+    end
+  end
+  -- The base data's prices, from before the player's own first record.
+  local base = M.Base(id)
+  if base then
+    local h, before = base.h, {}
+    for i = 1, #h, 4 do
+      local price = h[i + 2] > 0 and h[i + 2] or h[i + 1]
+      if price > 0 then before[#before + 1] = { h[i], price, h[i + 3], h[i + 1], "base" } end
+    end
+    if before[1] then
+      for j = 1, #out do before[#before + 1] = out[j] end
+      out, first = before, before[1][1]
     end
   end
   -- Hourly prices from the online data, where the player has no scan of
@@ -1322,12 +1580,16 @@ function M.Series(id)
   -- player's own stands at the same moment.
   local shared = M.Shared(id)
   if shared and shared.l and shared.l[1] and shared.l[1] > 0 then
+    local listed = shared.n or 0
+    if listed <= 0 then
+      for i = 2, #shared.l, 2 do listed = listed + shared.l[i] end
+    end
     local clash = false
     for j = 1, #out do
       if math.abs(out[j][1] - shared.t) < HISTORY_MERGE_SECONDS then clash = true break end
     end
     if not clash then
-      out[#out + 1] = { shared.t, shared.l[1] }
+      out[#out + 1] = { shared.t, M.RobustPrice(shared.l, listed), listed, shared.l[1], "shared" }
       if not first or shared.t < first then first = shared.t end
       table.sort(out, function(a, b) return a[1] < b[1] end)
     end
@@ -1335,15 +1597,15 @@ function M.Series(id)
   if on and on.h then
     local own = #out
     local keepAfter = ns.db and ns.db.onlineKeepAfter or 0
+    -- Both run forward in time, so one pass finds the nearest own point.
+    local j = 1
     for i = 1, #on.h, 3 do
       local t, price = on.h[i], on.h[i + 1]
       if price and price > 0 and t >= keepAfter then
-        local clash = false
-        for j = 1, own do
-          if math.abs(out[j][1] - t) < HISTORY_MERGE_SECONDS then clash = true break end
-        end
+        while j <= own and out[j][1] <= t - HISTORY_MERGE_SECONDS do j = j + 1 end
+        local clash = j <= own and out[j][1] < t + HISTORY_MERGE_SECONDS
         if not clash then
-          out[#out + 1] = { t, price }
+          out[#out + 1] = { t, price, on.h[i + 2], nil, "online" }
           if not first or t < first then first = t end
         end
       end
@@ -1363,7 +1625,7 @@ function M.Series(id)
           local t = day * 86400 + A.Constants.SCAN_DAY_0 + 43200
           if t > time() then t = time() end
           if not first or t < first - 6 * 3600 then
-            extra[#extra + 1] = { t, math.sqrt(lo * hi) }
+            extra[#extra + 1] = { t, math.sqrt(lo * hi), nil, lo, "auctionator" }
           end
         end
       end
@@ -1406,6 +1668,9 @@ end
 function M.VendorBuy(id)
   local seen = ns.db and ns.db.vendor[id]
   if seen then return seen, "seen" end
+  -- Seen at a merchant by the author of the base data.
+  local base = M.BaseMeta()
+  if base and base.vendor and base.vendor[id] then return base.vendor[id], "seen" end
   local cache = _G.AUCTIONATOR_VENDOR_PRICE_CACHE
   if type(cache) == "table" and type(cache[tostring(id)]) == "number" then
     return cache[tostring(id)], "auctionator"
@@ -1419,6 +1684,8 @@ end
 -- at, or a general pointer when it has only been read from the game's data.
 function M.VendorWhere(id)
   local at = ns.db and ns.db.vendorAt and ns.db.vendorAt[id]
+  local base = M.BaseMeta()
+  if not (at and (at.n or at.z)) and base and base.vendorAt then at = base.vendorAt[id] end
   if at and (at.n or at.z) then
     return (at.n or "a vendor") .. (at.z and (" in " .. at.z) or ""), true
   end
@@ -1600,10 +1867,16 @@ local function ProcessReplicate()
   local fingerprint = table.concat(parts, ":")
   if fingerprint == M.lastFingerprint then return end
   M.lastFingerprint = fingerprint
-  ns.Log("full scan list arrived: " .. n .. " auctions")
+  -- Far shorter than the last complete list of the last two days: only part
+  -- of the auction house came (seen in the game: 19,084 auctions between
+  -- lists of 164,015 and 213,689). Its prices are kept, but it says nothing
+  -- about what is not listed or what sold, and it is not counted as a scan.
+  local partial = n < M.PARTIAL_SHARE * (ns.db.lastFullCount or 0)
+    and time() - (ns.db.lastFullScan or 0) < M.SHORT_MEMORY
+  ns.Log("full scan list arrived: " .. n .. " auctions" .. (partial and " (only part of the auction house)" or ""))
   replicateBusy = true
   replicateLast = time()
-  ns.db.lastFullScan = time()
+  if not partial then ns.db.lastFullScan = time() end
   ns.Fire("FULLSCAN", "reading", 0, n)
   local tracked = ns.Data.items
   local acc, i = {}, 0
@@ -1618,7 +1891,7 @@ local function ProcessReplicate()
       M.AwaitReplicate()
       return
     end
-    ns.db.lastFullCount = n
+    if not partial then ns.db.lastFullCount = n end
     local ids = {}
     for id in pairs(tracked) do ids[#ids + 1] = id end
     local pos, now = 1, time()
@@ -1626,8 +1899,12 @@ local function ProcessReplicate()
       local stop = min(pos + 250, #ids)
       for j = pos, stop do
         local id = ids[j]
-        M.TrackSales(id, acc[id] or {}, now)
-        M.Record(id, acc[id] or {}, { full = true, t = now, perAuction = true })
+        if partial then
+          if acc[id] then M.Record(id, acc[id], { t = now, perAuction = true }) end
+        else
+          M.TrackSales(id, acc[id] or {}, now)
+          M.Record(id, acc[id] or {}, { full = true, t = now, perAuction = true })
+        end
       end
       pos = stop + 1
       if pos <= #ids then
@@ -1636,6 +1913,14 @@ local function ProcessReplicate()
         replicateBusy = false
         local listed = 0
         for _ in pairs(acc) do listed = listed + 1 end
+        if partial then
+          ns.Print("only part of the auction house came (" .. n .. " auctions of about " .. ns.db.lastFullCount
+            .. "): its prices are kept, but not as a full scan.")
+          ns.Log("partial scan recorded, " .. n .. " auctions, " .. listed .. " items")
+          ns.Fire("FULLSCAN", "done", n, listed)
+          ns.Fire("MARKET_UPDATED")
+          return
+        end
         ns.Print("recorded the full auction scan: " .. n .. " auctions, "
           .. listed .. " recipe items on sale.")
         ns.Log("full scan recorded, " .. n .. " auctions, " .. listed .. " items")
@@ -1698,6 +1983,8 @@ end
 -- looks a second apart with no event in between. A list much shorter than
 -- the last complete one is given longer before it is believed.
 local replicateWaiting, replicateTouched = false, false
+M.SHORT_MEMORY = 2 * 86400   -- a complete list is compared with for this long
+M.PARTIAL_SHARE = 0.35       -- below this share of it, a list is only part of the house
 
 function M.AwaitReplicate()
   replicateTouched = true
@@ -1713,7 +2000,7 @@ function M.AwaitReplicate()
       steady = steady + 1
     end
     local short = count < 0.6 * (ns.db.lastFullCount or 0)
-      and time() - (ns.db.lastFullScan or 0) < 3600
+      and time() - (ns.db.lastFullScan or 0) < M.SHORT_MEMORY
     local needed = short and 20 or 3
     if steady >= needed or looks > 120 then
       replicateWaiting = false
@@ -1927,10 +2214,114 @@ function M.Repair(db)
   return removed
 end
 
+------------------------------------------------------------------------------
+-- Part scans. Up to 0.3.0 a full scan list could still be read before all
+-- of it had come, when the last complete one was more than an hour old (in
+-- the game: 19,084 auctions between lists of 164,015 and 213,689). Its
+-- cheapest prices were too high and everything missing looked sold. Such
+-- scans are found by their auction count against the scans around them;
+-- their points, and the sales worked out across them, are taken out once.
+-- tools/make_base.lua cleans the base data the same way.
+------------------------------------------------------------------------------
+-- From a realm's list of full scans {time, auctions, ...}: the set of the
+-- times of part scans, and for every scan the time of the one before it.
+function M.PartScans(list)
+  local scans = {}
+  for i = 1, #(list or {}), 2 do scans[#scans + 1] = { t = list[i], n = list[i + 1] } end
+  local part, prev = {}, {}
+  for i, s in ipairs(scans) do
+    local near, far = 0, 0
+    for _, o in ipairs(scans) do
+      local dt = math.abs(o.t - s.t)
+      if dt <= 3600 then near = max(near, o.n) end
+      if dt <= 6 * 3600 then far = max(far, o.n) end
+    end
+    if s.n < 0.8 * near or s.n < 0.5 * far then part[s.t] = true end
+    if i > 1 then prev[s.t] = scans[i - 1].t end
+  end
+  return part, prev
+end
+
+-- Takes the gaps that begin or end at a part scan out of an item's selling
+-- rate belief. Each gap's rate is kept (it.sh: time, units a day); the
+-- share of the faded evidence that is clean scales the belief down.
+-- Returns true when it changed anything.
+function M.CleanSales(it, part, prev)
+  if not (it.sb and it.sb > 0 and type(it.sh) == "table") then return false end
+  local last = 0
+  for i = 1, #it.sh, 2 do last = max(last, it.sh[i]) end
+  local allU, allD, cleanU, cleanD = 0, 0, 0, 0
+  local sh = {}
+  for i = 1, #it.sh, 2 do
+    local t, rate = it.sh[i], it.sh[i + 1]
+    local before = prev[t]
+    local bad = part[t] or (before and part[before])
+    if before then
+      local days = (t - before) / 86400
+      local fade = 0.5 ^ ((last - t) / 86400 / SALES_HALFLIFE)
+      allU, allD = allU + fade * rate * days, allD + fade * days
+      if not bad then cleanU, cleanD = cleanU + fade * rate * days, cleanD + fade * days end
+    end
+    if not bad then sh[#sh + 1], sh[#sh + 2] = t, rate end
+  end
+  it.sh = sh
+  if allD <= 0 or cleanD >= allD - 1e-9 then return false end
+  local rd = cleanD / allD
+  local ru = allU > 0 and cleanU / allU or rd
+  it.sa, it.sc, it.sb = (it.sa or 0) * ru, (it.sc or 0) * ru, it.sb * rd
+  return true
+end
+
+function M.RepairPartScans(db)
+  if (db.dataVersion or 1) >= 3 then return 0, 0 end
+  local removed, scansRemoved = 0, 0
+  for _, realm in pairs(db.realms or {}) do
+    local part, prev = M.PartScans(realm.scans)
+    if next(part) then
+      for _, it in pairs(realm.items or {}) do
+        if type(it) == "table" and it.h then
+          local h, out = M.History(it), {}
+          for i = 1, #h, 4 do
+            if part[h[i]] then
+              removed = removed + 1
+            else
+              local n = #out
+              out[n + 1], out[n + 2], out[n + 3], out[n + 4] = h[i], h[i + 1], h[i + 2], h[i + 3]
+            end
+          end
+          if #out < #h then
+            it.h, it.hp, it.hn = out, nil, 0
+            if out[1] then Compact(it, out[#out - 3]) end
+          end
+          M.CleanSales(it, part, prev)
+          -- A ladder from a part scan is only part of one.
+          if it.lt and part[it.lt] then it.lp = true end
+        end
+      end
+      local kept = {}
+      for i = 1, #realm.scans, 2 do
+        if part[realm.scans[i]] then
+          scansRemoved = scansRemoved + 1
+        else
+          kept[#kept + 1], kept[#kept + 2] = realm.scans[i], realm.scans[i + 1]
+        end
+      end
+      realm.scans = kept
+    end
+  end
+  db.dataVersion = 3
+  return removed, scansRemoved
+end
+
 ns.Listen("LOGIN", function()
   local removed = M.Repair(ns.db)
   if removed > 0 then
     ns.Log("repaired history: " .. removed .. " false \"none listed\" points removed")
+    ns.generation = ns.generation + 1
+  end
+  local points, scans = M.RepairPartScans(ns.db)
+  if scans > 0 then
+    ns.Log("repaired history: " .. scans .. " part scans and their " .. points .. " points taken out")
     ns.generation = ns.generation + 1
   end
 end)

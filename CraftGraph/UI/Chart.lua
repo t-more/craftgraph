@@ -114,8 +114,262 @@ function C.Create(parent)
   end)
   f.smooth:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+  -- The readout under the mouse: a line at that moment, a mark where it
+  -- crosses each line drawn, the time along the bottom, and the numbers of
+  -- that moment beside the chart (where they cover nothing of it).
+  f.cursor = plot:CreateTexture(nil, "OVERLAY")
+  f.cursor:SetColorTexture(1, 0.95, 0.75, 0.85)
+  f.cursor:Hide()
+  f.marks = {}
+  -- The time at the line's foot: a small frame of its own, above the lines.
+  f.timeBox = CreateFrame("Frame", nil, plot)
+  f.timeBox:SetSize(100, 15)
+  f.timeBg = f.timeBox:CreateTexture(nil, "BACKGROUND")
+  f.timeBg:SetAllPoints()
+  f.timeBg:SetColorTexture(0, 0, 0, 0.85)
+  f.timeText = f.timeBox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.timeText:SetPoint("CENTER", 0, 1)
+  f.timeBox:Hide()
+  plot:EnableMouse(true)
+  plot:SetScript("OnEnter", function() f.hovering = true C.Follow(f) end)
+  plot:SetScript("OnLeave", function() f.hovering = false C.HideReadout(f) end)
+  plot:SetScript("OnUpdate", function() if f.hovering then C.Follow(f) end end)
+  plot:SetScript("OnHide", function() f.hovering = false C.HideReadout(f) end)
+  plot:SetScript("OnMouseUp", function(_, button)
+    if ns.UI and ns.UI.NavButton then ns.UI.NavButton(button) end
+  end)
+
   f.Update = C.Update
   return f
+end
+
+------------------------------------------------------------------------------
+-- The readout under the mouse
+------------------------------------------------------------------------------
+C.SNAP = 6        -- a scan this many pixels from the line is the one read
+C.SOURCE_WORDS = { own = "Scanned", base = "Base data", shared = "Shared by a player",
+  online = "Blizzard's data", auctionator = "Auctionator, that day" }
+-- What the dots and the gold line are, said under every readout.
+C.MEASURE = "Dots: the cheapest tenth on sale at each scan, averaged (at most the 50 cheapest), a price one "
+  .. "lone listing cannot set. Gold line: its estimate. Asking prices: the game never shows what anything sold for."
+
+-- The value of a drawn line (points { time, value }, straight between
+-- them) at time t, or nil outside it.
+local function At(points, t)
+  local n = points and #points or 0
+  if n == 0 or t < points[1][1] or t > points[n][1] then return nil end
+  for i = 2, n do
+    if points[i][1] >= t then
+      local a, b = points[i - 1], points[i]
+      local span = b[1] - a[1]
+      if span <= 0 then return b[2] end
+      return a[2] + (b[2] - a[2]) * (t - a[1]) / span
+    end
+  end
+  return points[n][2]
+end
+C.At = At
+
+local function Count(x)
+  if x >= 1000 then return (string.format("%.1fk", x / 1000):gsub("%.0k$", "k")) end
+  if x >= 10 then return tostring(ns.Round(x)) end
+  return (string.format("%.1f", x):gsub("%.0$", ""))
+end
+
+local function Signed(copper)
+  if math.abs(copper) < 1 then return "about even" end
+  return (copper < 0 and "-" or "+") .. ns.Money(math.abs(copper))
+end
+
+-- The captions along the chart's foot, where the time under the mouse goes.
+local function FootLabels(f) return { f.flowLabel, f.vendorLabel, f.yBottom } end
+
+function C.HideReadout(f)
+  if f.cursor:IsShown() then
+    for _, label in ipairs(FootLabels(f)) do label:Show() end
+  end
+  f.cursor:Hide()
+  f.timeBox:Hide()
+  HideFrom(f.marks, 1)
+  if f.readoutShown then
+    f.readoutShown = false
+    GameTooltip:Hide()
+  end
+  f.cursorX = nil
+end
+
+-- Reads the mouse and shows the readout where it is.
+function C.Follow(f)
+  local plot = f.plot
+  local left, scale = plot:GetLeft(), plot:GetEffectiveScale()
+  if not left or not scale or scale == 0 then return end
+  local x = GetCursorPosition() / scale - left
+  if f.cursorX and math.abs(x - f.cursorX) < 0.5 and f.readoutGeo == f.geo then return end
+  ns.Safe(C.ReadoutAt, f, x)
+end
+
+-- Shows the readout at x pixels from the chart's left edge. Returns the
+-- rows shown ({ label, value }, ...) and the moment, or nil when nothing
+-- is shown (no chart, outside it, or the readout switched off).
+function C.ReadoutAt(f, x)
+  local g = f.geo
+  if not g or not x or x < 0 or x > g.W or (ns.settings and ns.settings.chartHover == false) then
+    C.HideReadout(f)
+    return nil
+  end
+  f.cursorX, f.readoutGeo = x, g
+  local plot = f.plot
+  local day = g.t0 + x / g.W * (g.t1 - g.t0)
+  local t = g.now + day * 86400
+  local rows = {}
+  local function Row(label, value, r, gg, b)
+    rows[#rows + 1] = { label, value, r or 1, gg or 1, b or 1 }
+  end
+  local nMark = 0
+  local function Mark(y, r, gg, b, size)
+    if not y then return end
+    nMark = nMark + 1
+    local m = Acquire(f.marks, nMark, function()
+      local tex = plot:CreateTexture(nil, "OVERLAY")
+      tex:SetRotation(math.rad(45))
+      return tex
+    end)
+    m:SetColorTexture(r, gg, b, 1)
+    m:SetSize(size or 6, size or 6)
+    m:ClearAllPoints()
+    m:SetPoint("CENTER", plot, "BOTTOMLEFT", x, max(0, min(g.H, y)))
+    m:Show()
+  end
+
+  -- The line, and the time at its foot.
+  f.cursor:ClearAllPoints()
+  f.cursor:SetPoint("BOTTOMLEFT", plot, "BOTTOMLEFT", x, 0)
+  f.cursor:SetSize(1.5, g.H)
+  f.cursor:Show()
+  for _, label in ipairs(FootLabels(f)) do label:Hide() end
+  local when = date("%a %d %b %H:%M", t)
+  f.timeText:SetText(when)
+  local tw = max(60, (f.timeText:GetStringWidth() or 0)) + 10
+  local tx = max(tw / 2, min(g.W - tw / 2, x))
+  f.timeBox:ClearAllPoints()
+  f.timeBox:SetPoint("BOTTOM", plot, "BOTTOMLEFT", tx, 1)
+  f.timeBox:SetSize(tw, 15)
+  f.timeBox:Show()
+
+  local ago = t - time()
+  local relative
+  if math.abs(ago) < 300 then
+    relative = "now"
+  elseif ago < 0 then
+    relative = ns.Age(-ago)
+  else
+    local hours = ago / 3600
+    relative = hours < 36 and ("in " .. ns.Round(hours) .. " h") or ("in " .. ns.Round(hours / 24) .. " days")
+  end
+
+  -- The scan nearest the line, if one is close enough to be the one meant.
+  local best, bestDx
+  for i = 1, #g.series do
+    local p = g.series[i]
+    local px = (((p[1] - g.now) / 86400) - g.t0) / (g.t1 - g.t0) * g.W
+    local dx = math.abs(px - x)
+    if dx <= C.SNAP and (not bestDx or dx < bestDx) then best, bestDx = p, dx end
+  end
+  if best then
+    -- Where the dot came from, how many were on sale, and its two prices:
+    -- the cheapest, and the cheapest tenth averaged (the dot itself).
+    local label = C.SOURCE_WORDS[best[5] or "own"] or "Scanned"
+    if best[5] ~= "auctionator" and math.abs(best[1] - t) >= 120 then
+      local sameDay = date("%Y%m%d", best[1]) == date("%Y%m%d", t)
+      label = label .. " at " .. date(sameDay and "%H:%M" or "%a %H:%M", best[1])
+    end
+    Row(label, best[3] and (Count(best[3]) .. " on sale") or "", 1, 1, 1)
+    if best[5] == "auctionator" then
+      if best[4] then Row("   lowest that day", ns.Money(best[4])) end
+      Row("   middle of the day", ns.Money(best[2]))
+    else
+      if best[4] then Row("   cheapest", ns.Money(best[4])) end
+      Row("   cheapest tenth", ns.Money(best[2]))
+    end
+    Mark(g.Y(best[2]), 1, 1, 1, 9)
+  end
+
+  -- The estimate, or the forecast ahead of now.
+  local est, m, s
+  if day >= g.known then
+    m, s = ns.Stats.Eval(g.model, day, g.levelOnly)
+    est = exp(m)
+    Row(day > 0.004 and "Forecast" or "Estimate", ns.Money(est) .. " (" .. ns.Money(exp(m - 1.2816 * s)) .. " to "
+      .. ns.Money(exp(m + 1.2816 * s)) .. ")", 1, 0.82, 0.25)
+    if math.abs(day) > 0.004 then
+      local off = est / g.nowPrice - 1
+      Row("Against now", (off >= 0 and "+" or "-") .. ns.Round(math.abs(off) * 100) .. "%")
+    end
+    Mark(g.Y(est), 1, 0.82, 0.1, 7)
+  else
+    Row("Before the first scan", "nothing known", 0.6, 0.6, 0.6)
+  end
+  if g.average then
+    local v = At(g.average, t)
+    if v then
+      Row("Average over " .. C.SmoothText(g.smoothMinutes):gsub("^smooth: ", ""), ns.Money(v), 0.85, 0.85, 0.85)
+      Mark(g.Y(v), 0.9, 0.9, 0.9, 5)
+    end
+  end
+  if g.listed then
+    local v = At(g.listed, t)
+    -- Unsmoothed at a scan, the line is that scan's count, already given above.
+    local repeats = best and best[3] and g.smoothMinutes == 0
+    if v and not repeats then
+      Row(g.smoothMinutes > 0 and "On sale (average)" or "On sale", Count(v), 0.45, 0.75, 1)
+    end
+    if v then
+      Mark(g.Height(v, g.listedTop), 0.45, 0.75, 1, 6)
+    end
+  end
+  if g.demand or g.demandLevel then
+    local v = At(g.demand, t)
+    if not v and g.demandLevel and day >= g.known and day <= 0 then v = g.demandLevel end
+    if v then
+      Row("Sold a day", "about " .. Count(v) .. (g.demandFloor and "+" or ""), 0.4, 1, 0.4)
+      Mark(g.Height(v, g.demandTop), 0.4, 1, 0.4, 6)
+    end
+  end
+  if g.margin then
+    local v = At(g.margin, t)
+    if v then
+      Row("Margin each", Signed(v), 1, 0.5, 0.9)
+      Mark(g.MY(v), 1, 0.5, 0.9, 6)
+    end
+  end
+  -- What making one and selling it at that price would have left.
+  if g.craft and est then
+    local keep = 1 - ((ns.settings and ns.settings.cut) or 0.05)
+    local profit = est * keep - g.craft
+    local bad = exp(m - 2 * s) * keep - g.craft
+    Row("Make and sell one", Signed(profit) .. (math.abs(profit) < 1 and "" or " after the cut"), profit >= 0 and 0.35 or 1, profit >= 0 and 1 or 0.4,
+      profit >= 0 and 0.35 or 0.35)
+    if bad <= -1 then
+      Row("If prices turn", "could lose " .. ns.Money(-bad), 1, 0.4, 0.35)
+    else
+      Row("If prices turn", bad < 1 and "about even" or ("still " .. Signed(bad)), 0.7, 0.7, 0.7)
+    end
+  end
+  HideFrom(f.marks, nMark + 1)
+
+  GameTooltip:SetOwner(f, "ANCHOR_NONE")
+  GameTooltip:ClearAllPoints()
+  GameTooltip:SetPoint("TOPRIGHT", f, "TOPLEFT", -14, 0)
+  GameTooltip:SetText(when)
+  GameTooltip:AddLine(relative, 0.6, 0.6, 0.6)
+  for _, row in ipairs(rows) do
+    GameTooltip:AddDoubleLine(row[1], row[2], 1, 0.82, 0, row[3], row[4], row[5])
+  end
+  GameTooltip:AddLine(" ")
+  GameTooltip:AddLine(C.MEASURE, 0.6, 0.6, 0.6, true)
+  GameTooltip:Show()
+  f.readoutShown = true
+  return rows, t
 end
 
 local function MakeBand(plot)
@@ -312,6 +566,8 @@ function C.Update(f, id, opts)
   end
 
   if not model or not W or W < 10 or H < 10 then
+    f.geo = nil
+    C.HideReadout(f)
     f.empty:SetShown(not model)
     f.yTop:SetText("")
     f.yBottom:SetText("")
@@ -384,6 +640,14 @@ function C.Update(f, id, opts)
   hi = hi + range * 0.10
   local function Y(price) return (price - lo) / (hi - lo) * H end
   local function Clamp(y) return max(0, min(H, y)) end
+  -- What the readout under the mouse needs to read the chart back.
+  local geo = {
+    W = W, H = H, t0 = t0, t1 = t1, now = entry.now, known = known, model = model, levelOnly = levelOnly,
+    series = series, Y = Y, craft = opts.craft, smoothMinutes = 0,
+    nowPrice = exp((ns.Stats.Eval(model, 0, levelOnly))),
+    Height = function(value, top) return 4 + value / top * (H - 26) end,
+  }
+  f.geo = geo
 
   -- Certainty glow
   local colW = W / COLS
@@ -602,8 +866,10 @@ function C.Update(f, id, opts)
   f.smooth:Show()
   f.smoothText:SetText(C.SmoothText(smoothMinutes))
   f.smoothMinutes, f.averageLines = smoothMinutes, 0
+  geo.smoothMinutes = smoothMinutes
   if smoothMinutes > 0 and #series >= 3 then
     local average = C.Smooth(series, smoothMinutes * 60)
+    geo.average = average
     local lastX, lastY
     for i = 1, #average do
       local day = (average[i][1] - entry.now) / 86400
@@ -673,6 +939,7 @@ function C.Update(f, id, opts)
       if smoothMinutes > 0 then listed = C.Smooth(listed, smoothMinutes * 60) end
       local top = Top(listed)
       if top > 0 then
+        geo.listed, geo.listedTop = listed, top
         f.flowLines = Curve(listed, top, 0.45, 0.75, 1)
         parts[#parts + 1] = "|cff73bffflisted, most " .. N(top) .. "|r"
       end
@@ -705,13 +972,16 @@ function C.Update(f, id, opts)
       local atLeast = info and info.sales and info.sales.floor
       local top = max(Top(smooth), believed or 0)
       local green = { 0.4, 1, 0.4 }
+      geo.demandFloor = atLeast
       if #smooth >= 2 and top > 0 then
         top = Nice(top)
+        geo.demand, geo.demandTop = smooth, top
         f.demandLines = Curve(smooth, top, green[1], green[2], green[3])
         parts[#parts + 1] = "|cff66ff66sold a day, about " .. N(believed or smooth[#smooth][2]) .. (atLeast and "+" or "") .. "|r"
       elseif believed then
         -- One figure so far: a level line at the believed rate.
         top = Nice(max(believed, 0.1) * 1.5)
+        geo.demandLevel, geo.demandTop = believed, top
         local y = Height(believed, top)
         Line(X(known), y, X(0), y, green[1], green[2], green[3], 0.75, 1.1)
         f.demandLines = 1
@@ -752,6 +1022,7 @@ function C.Update(f, id, opts)
       end
       local spread = max(1, highest - lowest)
       local function MY(v) return 6 + (v - lowest) / spread * (H - 30) end
+      geo.margin, geo.MY = pts, MY
       local r, g, b = 1, 0.5, 0.9
       Line(0, MY(0), W, MY(0), r, g, b, 0.22, 1)
       local lastX, lastY
@@ -801,4 +1072,6 @@ function C.Update(f, id, opts)
   f.xNow:Show()
   f.xRight:Hide()
   Finish()
+  -- Drawn again under the mouse: the readout follows the new chart.
+  if f.hovering and f.cursorX then C.ReadoutAt(f, f.cursorX) end
 end

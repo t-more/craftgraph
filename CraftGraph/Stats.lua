@@ -550,14 +550,36 @@ function S.MarketPrior()
   if S.usePrior == false or not (ns.realm and ns.realm.items and ns.Market and ns.Market.Series) then return false end
   local now = time()
   if marketPrior ~= nil and (marketPriorGen == ns.generation or now - marketPriorAt < 600) then return marketPrior end
-  local ids = {}
+  local ids, own = {}, {}
   for id, it in pairs(ns.realm.items) do
-    if type(it) == "table" and ((it.hc or 0) >= 4 or (it.h and #it.h >= 12)) then ids[#ids + 1] = id end
+    if type(it) == "table" and ((it.hc or 0) >= 4 or (it.h and #it.h >= 12)) then
+      ids[#ids + 1] = id
+      own[id] = true
+    end
   end
   table.sort(ids)
+  -- Too few of the player's own: the base data's items fill in (their
+  -- history counts only for the time before the player's own scans).
+  local extra = {}
+  if #ids < S.PRIOR_SAMPLE and ns.Market.BaseItems then
+    for id in pairs(ns.Market.BaseItems()) do
+      if not own[id] then extra[#extra + 1] = id end
+    end
+    table.sort(extra)
+  end
   local list, step = {}, max(1, floor(#ids / S.PRIOR_SAMPLE))
   for i = 1, #ids, step do
     list[#list + 1] = ns.Market.Series(ids[i])
+  end
+  -- Evenly through the rest, keeping only series long enough to count.
+  step = max(1, floor(#extra / S.PRIOR_SAMPLE))
+  for start = 1, step do
+    for i = start, #extra, step do
+      if #list >= S.PRIOR_SAMPLE then break end
+      local series = ns.Market.Series(extra[i])
+      if #series >= 4 then list[#list + 1] = series end
+    end
+    if #list >= S.PRIOR_SAMPLE then break end
   end
   marketPrior = S.PriorFrom(list, now)
   marketPrior.sampled = #list

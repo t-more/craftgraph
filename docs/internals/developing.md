@@ -25,7 +25,9 @@ restart is only needed when a file is added or `CraftGraph.toc` changes.
       Optimizer.lua        cheapest way to make things, plans, opportunities, projections
       Graph.lua            the crafting graph
       UI/                  window, charts, graph view
+      News.lua             the market news: changes by kind of goods and by profession and rank
       Data/Recipes.lua     generated recipe and item data
+      Data/Base.lua        the base data: the author's own scans, packed (tools/make_base.lua)
       Data/Online.lua      empty here; the sync tool writes the real one in the game folder
       sync/                optional Python tool: scan archive (SQLite) and Blizzard's hourly data
       tools/               development only, not installed or shipped
@@ -35,6 +37,8 @@ restart is only needed when a file is added or `CraftGraph.toc` changes.
         stats_v1.lua       the first price model, kept for comparison
         gen_data.py        regenerates Data/Recipes.lua (recipes, items, which item teaches a
                            recipe) from wago.tools DB2 exports
+        make_base.lua      builds Data/Base.lua from a saved file (basepack.lua packs)
+        qa_base.lua        checks the base data and the news on real files
 
 ## Where things are on this machine
 
@@ -86,6 +90,26 @@ voices use Kokoro (a small neural speech model) when it is installed in its own 
 `~/.local/share/craftgraph-tts` (a Python 3.12 venv with `kokoro-onnx` and `soundfile`, the two
 model files from the kokoro-onnx releases, and a `say.py` that writes one line to a WAV), and
 fall back to espeak-ng. None of this is needed for the addon.
+
+## The base data
+`Data/Base.lua` is built from a saved file of the author's own scans:
+
+    cd CraftGraph
+    lua5.1 tools/make_base.lua <path to SavedVariables/CraftGraph.lua>
+
+It takes the auction house with the most items (or the one named as a second argument), leaves out
+part scans, thins to one point an hour, packs, then unpacks every item again with the game's own
+reader and stops if anything moved more than it should. Never build it from Blizzard's data
+(`Data/Online.lua` or the SQLite archive): their terms forbid passing it on, even averaged.
+
+    lua5.1 tools/qa_base.lua <saved file> [item kinds .lua]
+
+checks it on real files: on the author's own install nothing may change with the base data on
+(item by item), and on a new install on the same auction house it shows what the base data gives
+and the news from it alone. The item kinds file (`{ [itemID] = { class, subclass, kind name,
+sub-kind name } }`, from the game's Item, ItemClass and ItemSubClass tables) is optional; in the
+game the game itself names the kinds. `tools/render/real.lua` takes the same file as a fifth
+argument to draw the News page from real scans.
 
 ## Checking the priors
 `lua5.1 tools/backtest_priors.lua` (simulated market) or with the path of a saved file (real

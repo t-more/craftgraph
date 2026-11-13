@@ -18,8 +18,29 @@ A source that is not there (not set up, not installed) has no tick and says why.
 | Sales seen between full scans | how fast things sell | two full scans within 12 hours |
 | Auctionator's prices | prices for items you have not scanned here | the Auctionator addon |
 | Blizzard's hourly data | prices and sales while you are away | Python 3 and a free Battle.net API key |
+| Base data shipped with the addon | history from before your first scan | being on its auction house |
 
 Switch one off and the numbers are worked out again without it, so you can see what it changes.
+
+## The base data
+The addon comes with prices its author scanned on one auction house (CAMWOW EU4 Realm 2 PvP,
+Alliance; the Data sources page says which, and from when to when). On that auction house a new
+install starts with history instead of nothing: prices and how many were on sale, the last price
+ladder, how listings were stacked, how fast things sold, vendor prices and where the vendors
+stand, and the market's habits that the estimates start from. The [News](../play/news.md) can then
+compare from the first day.
+
+It is history, not the here and now:
+- For each item it is used only for the time **before your own first scan** of that item. Once you
+  have scanned something, your scans lead and the base data only fills in the time before.
+- A price that only the base data has seen shows its age and says "base data", and like any old
+  price it counts as stale.
+- How fast things sold fades with age the way your own evidence does: half its weight a week.
+- On any other auction house it is not used at all.
+
+It holds no seller or character names, and none of Blizzard's web data: Blizzard's terms forbid
+passing that on, even averaged or summed up. Scans that were only part of the auction house (a
+fault fixed after 0.3.0, see [How history is stored](../internals/storage.md)) are left out of it.
 
 ## Sharing prices with another player
 The **Share prices** sub-page (or `/cg share`) has a box of text.

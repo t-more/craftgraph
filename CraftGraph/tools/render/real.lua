@@ -1,11 +1,17 @@
 -- Draws pictures from a real saved file instead of the simulated market:
---   lua5.1 tools/render/real.lua <SavedVariables/CraftGraph.lua> <output folder> [item name] [seconds since the last scan]
+--   lua5.1 tools/render/real.lua <SavedVariables/CraftGraph.lua> <output folder> [item name] [seconds since the last scan] [item kinds .lua]
+-- The item kinds file (see tools/qa_base.lua) lets the News page group by kind of goods.
 -- Nothing is written back. The pictures show prices only: no seller names
 -- and no character name (the Sales seen page is not drawn).
 local saved, OUT, itemName, since = arg[1], arg[2] or "real-build", arg[3] or "Elixir of Lesser Agility", tonumber(arg[4] or "")
+local kinds = arg[5] and dofile(arg[5])
 assert(saved, "give the path of the saved file")
 local wow = dofile("tools/render/wowlayout.lua")
-C_Item = { GetItemInfoInstant = function(id) return id, "", "", "", 0, 7, 0 end, GetItemCount = function() return 0 end }
+C_Item = { GetItemInfoInstant = function(id)
+  local k = kinds and kinds[id]
+  if k then return id, k[3], k[4], "", 0, k[1], k[2] end
+  return id, "", "", "", 0, 7, 0
+end, GetItemCount = function() return 0 end }
 C_Container = nil
 C_AuctionHouse = {
   GetNumReplicateItems = function() return 0 end, ReplicateItems = function() end,
@@ -61,6 +67,19 @@ s.showGuesses, s.sideChart, s.chartDays, s.chartDemand, s.chartFlow, s.chartGrid
 ns.Open(id) settle()
 ns.UI.SetQuantity(20) settle()
 still("real-graph", { zoom = 1.5 })
+-- The price chart with the mouse on it: the readout of that moment.
+do
+  local chart = ns.UI.sideChart
+  local plot, g = chart.plot, chart.geo
+  local best, fx = nil, 0.58
+  for _, p in ipairs(g.series) do
+    local x = ((p[1] - g.now) / 86400 - g.t0) / (g.t1 - g.t0)
+    if x <= 0.9 and (not best or math.abs(x - 0.6) < math.abs(best - 0.6)) then best = x end
+  end
+  wow.point(plot, best or fx, 0.55) wow.hover(plot)
+  still("real-chart-readout", { zoom = 1.5 })
+  wow.hover(nil) GameTooltip:Hide()
+end
 ns.UI.ShowTrends(true) settle()
 still("real-trends", { zoom = 1.5 })
 ns.UI.ShowWorth(true) settle()
@@ -69,6 +88,28 @@ for _, f in ipairs(wow.frames) do
 end
 settle()
 still("real-ways", { zoom = 1.5 })
+-- The news, both tables, and what is behind one row.
+ns.UI.ShowNews(true) settle()
+local news
+for _, f in ipairs(wow.frames) do if f.movers and f.tabs and f.tabs.kinds then news = f end end
+still("real-news", { zoom = 1.5 })
+if news and news.rows[1].data then
+  wow.point(news.rows[1], 0.2, 0.5) wow.hover(news.rows[1])
+  still("real-news-kind", { zoom = 1.5 })
+  wow.hover(nil) GameTooltip:Hide()
+end
+if news then
+  wow.click(news.tabs.professions)
+  still("real-news-professions", { zoom = 1.5 })
+  for _, row in ipairs(news.rows) do
+    if row.data and row.data.rank then
+      wow.point(row, 0.2, 0.5) wow.hover(row)
+      still("real-news-rank", { zoom = 1.5 })
+      wow.hover(nil) GameTooltip:Hide()
+      break
+    end
+  end
+end
 
 -- The facts, for the text beside the pictures.
 local M, S, O = ns.Market, ns.Stats, ns.Opt

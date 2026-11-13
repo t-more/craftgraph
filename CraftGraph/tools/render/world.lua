@@ -89,6 +89,24 @@ table.sort(ids)
 for _, id in ipairs(ids) do BaseOf(id) end
 World.ids = ids
 
+-- Kinds of goods, roughly as the game would name them: goods by the
+-- profession that makes them, raw materials by the one that uses them.
+local usedBy = {}
+for spell, r in pairs(ns.Data.recipes) do
+  if skillSet[r[1]] then
+    for i = 1, #r[7], 2 do usedBy[r[7][i]] = usedBy[r[7][i]] or ns.Data.skills[r[1]] end
+  end
+end
+local MADE = { Alchemy = { 0, 1, "Consumable", "Potions" }, Mining = { 7, 7, "Trade Goods", "Metal & Stone" },
+  Blacksmithing = { 4, 0, "Armor", "Miscellaneous" }, Engineering = { 7, 1, "Trade Goods", "Parts" } }
+local RAW = { Alchemy = { 7, 9, "Trade Goods", "Herb" }, Mining = { 7, 7, "Trade Goods", "Metal & Stone" },
+  Blacksmithing = { 7, 7, "Trade Goods", "Metal & Stone" }, Engineering = { 7, 11, "Trade Goods", "Other" } }
+C_Item.GetItemInfoInstant = function(id)
+  local r = madeBy[id]
+  local k = r and MADE[ns.Data.skills[r[1]]] or RAW[usedBy[id] or ""] or { 7, 11, "Trade Goods", "Other" }
+  return id, k[3], k[4], "", 0, k[1], k[2]
+end
+
 -- Each item's own character.
 local traits = {}
 for _, id in ipairs(ids) do

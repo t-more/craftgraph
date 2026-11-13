@@ -8,6 +8,7 @@
 ## AddonCompartmentFunc: CraftGraph_OnAddonCompartmentClick
 
 Data\Recipes.lua
+Data\Base.lua
 Data\Online.lua
 Data\Latest.lua
 Data\Shared.lua
@@ -16,6 +17,7 @@ Core.lua
 Market.lua
 Stats.lua
 Optimizer.lua
+News.lua
 Graph.lua
 UI\Chart.lua
 UI\GraphView.lua

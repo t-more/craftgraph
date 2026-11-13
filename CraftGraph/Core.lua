@@ -137,8 +137,11 @@ local DEFAULTS = {
   chartFlow = false,  -- draw supply (units listed) on the price chart
   chartDemand = false, -- draw demand (units sold a day) on the price chart
   chartMargin = false, -- draw the margin of making and selling one on the price chart
+  chartHover = true,  -- hovering the price chart shows a line and the numbers of that moment
   showGuesses = false, -- show forecasts and patterns even where they are only guesses
   srcShared = true,   -- use prices another player shared with you
+  newsChat = true,   -- the day's market news in chat, once a day
+  srcBase = true,    -- use the base data shipped with the addon, before your own scans
   srcOnline = true,   -- use Blizzard's hourly data when the sync tool has brought it in
   srcAuctionator = true, -- use Auctionator's prices and history where we have none
   srcSales = true,    -- use sales worked out from auctions that vanish between full scans
@@ -386,6 +389,13 @@ SlashCmdList["CRAFTGRAPH"] = function(msg)
     -- and brings the window back where it was.
     if ns.settings and ns.UI and ns.UI.IsOpen then ns.settings.reopen = ns.UI.IsOpen() end
     ReloadUI()
+    return
+  end
+  if msg == "news" or msg == "n" then
+    if ns.UI and ns.UI.ShowNews then
+      if not (ns.UI.IsOpen and ns.UI.IsOpen()) then ns.Open() end
+      ns.Safe(ns.UI.ShowNews, true)
+    end
     return
   end
   if msg == "trends" or msg == "t" then

@@ -379,7 +379,9 @@ local function CreatePanel(parent)
     "Switches this box between three pictures: the price over time with its forecast; every scan "
     .. "folded onto one week, with the usual curve and the projection for the coming week; and the "
     .. "same folded onto one day. In the folded pictures, drag or scroll to pick a time, such as "
-    .. "Monday afternoon, and read its price.")
+    .. "Monday afternoon, and read its price. The price in all three is the cheapest tenth on sale, "
+    .. "averaged (at most the 50 cheapest), which one lone listing cannot set; the Auction price "
+    .. "above is the single cheapest. Both are asking prices: the game never shows what anything sold for.")
   p.chartMode = chartHeader
   local RANGES = { 14, 90, 0 }
   local function RangeText()
@@ -410,7 +412,7 @@ local function CreatePanel(parent)
     "Tick what to draw: the certainty glow, a grid to read prices off, bars for how much the price moved "
     .. "from one period to the next, and the supply and demand lines.")
   local options = CreateFrame("Frame", nil, p, "BackdropTemplate")
-  options:SetSize(186, 12 + 6 * 22)
+  options:SetSize(186, 12 + 7 * 22)
   options:SetPoint("TOPRIGHT", p, "TOPRIGHT", -12, y - 18)
   options:SetFrameStrata("DIALOG")
   options:SetBackdrop({ bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
@@ -460,10 +462,16 @@ local function CreatePanel(parent)
     .. "after the auction house's cut, with the materials at their prices of that moment. The faint line "
     .. "at its foot is nothing: above it pays, below it loses. Under the chart: the margin now and where "
     .. "it is heading, said only when that is at least three chances in four. Only for things you can make.")
-  p.chartChecks = { p.grid, p.bars, p.certainty, p.flow, p.demand, p.margin }
+  p.hover = Option("chartHover", "Readout under the mouse", "Readout under the mouse",
+    "Hover the chart: a line marks that moment, with its time at the foot and a mark where it crosses "
+    .. "each line, and beside the chart the numbers of that moment: the scan there, the estimate with "
+    .. "its range, supply, demand and margin when they are drawn, and what making and selling one "
+    .. "would have left.")
+  p.chartChecks = { p.grid, p.bars, p.certainty, p.flow, p.demand, p.margin, p.hover }
   y = y - 20
 
   chart = ns.Chart.Create(p)
+  UI.sideChart = chart
   chart:SetPoint("TOPLEFT", 12, y)
   chart:SetSize(PANEL_W - 24, 160)
   p.week = UI.CreateWeekStrip(p)
@@ -715,7 +723,7 @@ local function UpdatePanel()
   if info and info.price then
     local text = ns.Money(info.price)
     if sd then text = text .. GREY .. " \194\177" .. ns.Round(sd * 100) .. "%|r" end
-    rows.auction:SetText(text .. GREY .. ", " .. ns.Age(info.age) .. "|r")
+    rows.auction:SetText(text .. GREY .. ", " .. ns.Age(info.age) .. (info.base and " (base data)" or "") .. "|r")
   elseif info then
     rows.auction:SetText(GREY .. "none listed " .. ns.Age(info.age) .. "|r")
   else
@@ -2217,6 +2225,9 @@ function UI.ScanAgeText(id)
   if not info or info.source ~= "scan" or not info.age then
     return "|cffff8c33never scanned by you|r"
   end
+  if info.base then
+    return "|cffff8c33not scanned by you; the base data saw it " .. ns.Age(info.age) .. "|r"
+  end
   local text = "latest " .. ns.Age(info.age)
   if info.age > 2 * 3600 then return "|cffff8c33" .. text .. "|r" end
   return GREY .. text .. "|r"
@@ -2390,7 +2401,9 @@ function UI.UpdateTrends()
           .. watched .. " watched). Scan more often for a real figure."
       else
         facts.sells = "about " .. N(sales.rate) .. " a day (" .. N(sales.lo) .. " to " .. N(sales.hi)
-          .. "), from " .. N(sales.units) .. " judged sold over " .. watched .. " of full scans."
+          .. "), from " .. N(sales.units) .. " judged sold over " .. watched .. " of full scans"
+          .. (sales.base and ((sales.base >= sales.days - 0.01) and ", all of it in the base data."
+            or ", partly in the base data.") or ".")
       end
     end
   end
@@ -2685,7 +2698,402 @@ function UI.UpdateTrends()
   ns.QueueTruncationCheck()
 end
 
--- The main area shows one of four things: "graph", "worth", "sell" or "trends".
+------------------------------------------------------------------------------
+-- News: what moved in the market over the day and the week, by kind of
+-- goods and by profession and rank (News.lua works it out).
+------------------------------------------------------------------------------
+local news, newsButton
+local newsTab = "kinds"
+local NEWS_ROWS, NEWS_MOVERS = 17, 5
+
+-- A group's items for a tooltip: the ones that moved most over the day.
+local function NewsItemLines(r, items, limit)
+  local list = {}
+  for _, id in ipairs(items or {}) do
+    local c = r.changes[id]
+    if c and c.day and not c.thin then list[#list + 1] = { id = id, d = c.day } end
+  end
+  table.sort(list, function(a, b) return math.abs(a.d) > math.abs(b.d) end)
+  for i = 1, math.min(limit, #list) do
+    local d = list[i].d
+    local p = ns.Round((math.exp(d) - 1) * 100)
+    local cr, cg, cb = ns.ItemColor(list[i].id)
+    GameTooltip:AddDoubleLine(ns.ItemName(list[i].id), (p > 0 and "+" or "") .. p .. "% over the day",
+      cr, cg, cb, d > 0 and 0.3 or 1, d > 0 and 0.85 or 0.4, d > 0 and 0.3 or 0.35)
+  end
+  if #list > limit then GameTooltip:AddLine("and " .. (#list - limit) .. " more", 0.6, 0.6, 0.6) end
+end
+
+local function NewsSumLine(label, s)
+  if not s or s.word == "few" then
+    GameTooltip:AddDoubleLine(label, "too few items (" .. (s and s.n or 0) .. ")", 1, 0.82, 0, 0.6, 0.6, 0.6)
+  else
+    GameTooltip:AddDoubleLine(label, ns.News.Words(s, true) .. ", " .. s.n .. " items", 1, 0.82, 0, 1, 1, 1)
+  end
+end
+
+-- "Over the week", or "Over 3 days" while there is less than a week to compare with.
+local function NewsSpanHead(span)
+  if not span or span >= 6.5 then return "Over the week" end
+  local d = math.floor(span + 0.5)
+  return "Over " .. d .. (d == 1 and " day" or " days")
+end
+
+-- "week", or "3 days" while there is less than a week to compare with.
+local function NewsSpanShort(span)
+  if not span or span >= 6.5 then return "week" end
+  local d = math.floor(span + 0.5)
+  return d .. (d == 1 and " day" or " days")
+end
+
+local function CreateNews(parent)
+  local f = CreateFrame("Frame", nil, parent)
+  f:SetPoint("TOPLEFT", 3, -3)
+  f:SetPoint("BOTTOMRIGHT", -3, 3)
+  f:Hide()
+  local bg = f:CreateTexture(nil, "BACKGROUND")
+  bg:SetAllPoints()
+  bg:SetColorTexture(0.05, 0.04, 0.03, 0.92)
+  f:EnableMouse(true)
+  f:SetScript("OnMouseUp", function(_, button) UI.NavButton(button) end)
+
+  f.title = Text(f, "GameFontNormalLarge")
+  f.title:SetPoint("TOPLEFT", 14, -12)
+  f.title:SetText("Market news")
+  local titleHit = CreateFrame("Frame", nil, f)
+  titleHit:SetAllPoints(f.title)
+  titleHit:EnableMouse(true)
+  Tip(titleHit, "How the news is made",
+    "Each item's usual price over the newest day of data is compared with the day before and with a "
+    .. "week before. A group's change is the middle of its items' changes; the range beside it holds "
+    .. "four times in five. It says up or down only when that is three chances in four; otherwise "
+    .. "steady (the range stays within 2%) or unclear. Ranks go by the skill where a recipe turns "
+    .. "yellow, less 15: roughly where it is learned (the game data does not say).")
+
+  -- In chat once a day.
+  local chat = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
+  chat:SetSize(22, 22)
+  chat:SetPoint("TOPRIGHT", -190, -9)
+  chat:SetScript("OnClick", function(self) ns.settings.newsChat = self:GetChecked() and true or false end)
+  Tip(chat, "Headline in chat", "Once a day, a little after you log in, the day's main moves in one line of chat.")
+  local chatLabel = Text(f, "GameFontHighlightSmall")
+  chatLabel:SetPoint("LEFT", chat, "RIGHT", 0, 1)
+  chatLabel:SetText("Headline in chat once a day")
+  f.chat = chat
+
+  f.when = Text(f, "GameFontHighlightSmall")
+  f.when:SetPoint("TOPLEFT", 14, -34)
+  f.when:SetPoint("TOPRIGHT", -14, -34)
+  f.when:SetWordWrap(true)
+  f.when:SetMaxLines(2)
+  f.lead = Text(f, "GameFontNormal")
+  f.lead:SetPoint("TOPLEFT", 14, -62)
+  f.lead:SetPoint("TOPRIGHT", -14, -62)
+  f.lead:SetWordWrap(true)
+  f.lead:SetMaxLines(2)
+
+  -- The biggest single moves of the day, rising on the left, falling on the right.
+  f.moverTitles, f.movers = {}, {}
+  for side = 1, 2 do
+    local x = side == 1 and 14 or 404
+    local t = Text(f, "GameFontNormalSmall")
+    t:SetPoint("TOPLEFT", x, -98)
+    t:SetText(side == 1 and "Rising most over the day" or "Falling most over the day")
+    f.moverTitles[side] = t
+    f.movers[side] = {}
+    for i = 1, NEWS_MOVERS do
+      local row = CreateFrame("Button", nil, f)
+      row:SetSize(380, 18)
+      row:SetPoint("TOPLEFT", x - 4, -114 - (i - 1) * 18)
+      row.icon = row:CreateTexture(nil, "ARTWORK")
+      row.icon:SetSize(15, 15)
+      row.icon:SetPoint("LEFT", 4, 0)
+      row.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+      row.name = Text(row, "GameFontHighlightSmall")
+      row.name:SetPoint("LEFT", row.icon, "RIGHT", 5, 0)
+      row.name:SetWidth(170)
+      row.name:SetWordWrap(false)
+      row.change = Text(row, "GameFontHighlightSmall")
+      row.change:SetPoint("LEFT", row, "LEFT", 196, 0)
+      row.change:SetWidth(180)
+      row.change:SetWordWrap(false)
+      local hl = row:CreateTexture(nil, "HIGHLIGHT")
+      hl:SetAllPoints()
+      hl:SetColorTexture(1, 0.82, 0, 0.12)
+      row:RegisterForClicks("LeftButtonUp", "Button4Up", "Button5Up")
+      row:SetScript("OnClick", function(self, button)
+        if UI.NavButton(button) then return end
+        if self.data then
+          UI.Remember()
+          UI.Focus(self.data.id)
+          UI.ShowGraph()
+        end
+      end)
+      row:SetScript("OnEnter", function(self)
+        local d = self.data
+        if not d then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(ns.ItemName(d.id), ns.ItemColor(d.id))
+        GameTooltip:AddDoubleLine("Usual price over the day", ns.Money(d.now), 1, 0.82, 0, 1, 1, 1)
+        GameTooltip:AddDoubleLine("Change from the day before", ns.News.Words(d, true), 1, 0.82, 0, 1, 1, 1)
+        GameTooltip:AddLine("From " .. d.n .. " prices seen over the two days.", 0.6, 0.6, 0.6, true)
+        GameTooltip:AddLine("Click to open it in the graph.", 0.6, 0.6, 0.6)
+        GameTooltip:Show()
+      end)
+      row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+      f.movers[side][i] = row
+    end
+  end
+
+  -- The groups: by kind of goods, or by profession and rank.
+  local tabY = -114 - NEWS_MOVERS * 18 - 10
+  f.tabs = {}
+  local tabDefs = {
+    { key = "kinds", text = "By kind of goods", width = 130,
+      tip = "Groups by the game's own kinds: Herb, Cloth, Metal & Stone, Potion and so on." },
+    { key = "professions", text = "By profession and rank", width = 164,
+      tip = "For each profession and rank: the materials its recipes use and the goods they make." },
+  }
+  local tx = 12
+  for _, def in ipairs(tabDefs) do
+    local b = Button(f, def.text, def.width)
+    b:SetHeight(21)
+    b:SetPoint("TOPLEFT", tx, tabY)
+    b:SetScript("OnClick", function()
+      newsTab = def.key
+      f.offset = 0
+      ns.Safe(UI.UpdateNews)
+    end)
+    Tip(b, def.text, def.tip)
+    f.tabs[def.key] = b
+    tx = tx + def.width + 4
+  end
+  f.tabNote = Text(f, "GameFontDisableSmall")
+  f.tabNote:SetPoint("TOPLEFT", f.tabs.professions, "TOPRIGHT", 10, -5)
+  f.tabNote:SetPoint("TOPRIGHT", f, "TOPRIGHT", -14, tabY - 5)
+  f.tabNote:SetWordWrap(false)
+
+  local headY = tabY - 30
+  -- Column positions: the first column, then four.
+  f.cols = { 14, 300, 470, 640 }
+  f.heads = {}
+  for i = 1, 5 do
+    local h = Text(f, "GameFontNormalSmall")
+    h:SetPoint("TOPLEFT", i == 1 and 14 or (i == 2 and 196 or (i == 3 and 352 or (i == 4 and 508 or 664))), headY)
+    f.heads[i] = h
+  end
+  local line = f:CreateTexture(nil, "ARTWORK")
+  line:SetColorTexture(1, 0.82, 0, 0.3)
+  line:SetHeight(1)
+  line:SetPoint("TOPLEFT", 10, headY - 16)
+  line:SetPoint("TOPRIGHT", -10, headY - 16)
+
+  f.rows = {}
+  for i = 1, NEWS_ROWS do
+    local row = CreateFrame("Button", nil, f)
+    row:SetHeight(18)
+    local y = headY - 20 - (i - 1) * 18
+    row:SetPoint("TOPLEFT", 8, y)
+    row:SetPoint("TOPRIGHT", -8, y)
+    row.cells = {}
+    local xs = { 6, 188, 344, 500, 656 }
+    local ws = { 178, 152, 152, 152, 140 }
+    for c = 1, 5 do
+      local fs = Text(row, "GameFontHighlightSmall")
+      fs:SetPoint("LEFT", row, "LEFT", xs[c], 0)
+      fs:SetWidth(ws[c])
+      fs:SetWordWrap(false)
+      row.cells[c] = fs
+    end
+    local hl = row:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(1, 0.82, 0, 0.12)
+    row:RegisterForClicks("LeftButtonUp", "Button4Up", "Button5Up")
+    row:SetScript("OnClick", function(_, button) UI.NavButton(button) end)
+    row:SetScript("OnEnter", function(self)
+      local d, r = self.data, ns.News and ns.News.result
+      if not d or not r or not r.changes then return end
+      GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+      if d.kind then
+        GameTooltip:SetText(d.kind.name)
+        NewsSumLine("Over the day", d.kind.day)
+        NewsSumLine(NewsSpanHead(d.kind.span), d.kind.week)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Moved most:", 1, 0.82, 0)
+        NewsItemLines(r, d.kind.items, 10)
+      elseif d.rank then
+        GameTooltip:SetText(d.profession .. ", " .. d.rank.name)
+        GameTooltip:AddLine("Materials its recipes use", 1, 0.82, 0)
+        NewsSumLine("  over the day", d.rank.mats.day)
+        NewsSumLine("  " .. NewsSpanHead(d.rank.mats.span):lower(), d.rank.mats.week)
+        NewsItemLines(r, d.rank.mats.items, 6)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Goods its recipes make", 1, 0.82, 0)
+        NewsSumLine("  over the day", d.rank.goods.day)
+        NewsSumLine("  " .. NewsSpanHead(d.rank.goods.span):lower(), d.rank.goods.week)
+        NewsItemLines(r, d.rank.goods.items, 6)
+      else
+        GameTooltip:Hide()
+        return
+      end
+      GameTooltip:Show()
+    end)
+    row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    f.rows[i] = row
+  end
+  f.more = Text(f, "GameFontDisableSmall")
+  f.more:SetPoint("BOTTOMLEFT", 14, 8)
+  f.offset = 0
+  f:EnableMouseWheel(true)
+  f:SetScript("OnMouseWheel", function(self, delta)
+    self.offset = math.max(0, self.offset - delta * 3)
+    ns.Safe(UI.UpdateNews)
+  end)
+  return f
+end
+
+-- What the newest data is and how old, in words.
+local function NewsWhen(r)
+  local age = time() - r.anchor
+  local from = r.anchorFrom == "own" and "your scans" or (r.anchorFrom == "online" and "Blizzard's hourly data"
+    or "the base data shipped with the addon")
+  local text = "Newest data " .. ns.Age(age) .. " (" .. from .. "). The day is the 24 hours up to it, against "
+    .. "the 24 hours before; the week against a week before."
+  if age > 86400 then
+    return "|cffff8c33" .. text .. " This is not today's news: scan at the auction house to bring it up to date.|r"
+  end
+  return GREY .. text .. "|r"
+end
+
+function UI.UpdateNews()
+  if not news or not news:IsShown() then return end
+  local f = news
+  f.chat:SetChecked(ns.settings.newsChat ~= false)
+  for key, b in pairs(f.tabs) do
+    if key == newsTab then b:LockHighlight() else b:UnlockHighlight() end
+  end
+  if not ns.News then
+    -- News.lua is new: the game reads a new file only when it starts.
+    f.when:SetText("|cffff8c33The news needs a full restart of the game (a new file was added); /reload is not enough.|r")
+    f.lead:SetText("")
+    return
+  end
+  local r = ns.News.result
+  local progress = ns.News.Progress()
+  local function Clear()
+    for side = 1, 2 do
+      for _, row in ipairs(f.movers[side]) do row.data = nil row:Hide() end
+    end
+    for _, row in ipairs(f.rows) do row.data = nil row:Hide() end
+    for _, h in ipairs(f.heads) do h:SetText("") end
+    f.more:SetText("")
+    f.tabNote:SetText("")
+  end
+  if not r or r.empty then
+    Clear()
+    if progress then
+      f.when:SetText(GREY .. "Working it out ... " .. ns.Round(progress * 100) .. "%|r")
+      f.lead:SetText("")
+    else
+      f.when:SetText(GREY .. "No prices yet.|r")
+      f.lead:SetText("Scan at the auction house (Full scan). The news compares days, so it starts the day "
+        .. "after your first scan; the week needs a week.")
+    end
+    return
+  end
+  f.when:SetText(NewsWhen(r) .. (progress and (GREY .. "  Updating ... " .. ns.Round(progress * 100) .. "%|r") or ""))
+  local lead = {}
+  if r.all.day.word ~= "few" then lead[#lead + 1] = "over the day " .. ns.News.Words(r.all.day) end
+  if r.all.week.word ~= "few" then
+    lead[#lead + 1] = ns.News.SpanWords(r.all.span) .. " " .. ns.News.Words(r.all.week)
+  end
+  if #lead == 0 then
+    f.lead:SetText("Prices overall: " .. GREY .. "too little history to compare yet (it needs two days).|r")
+  else
+    f.lead:SetText("Prices overall: " .. table.concat(lead, "; ") .. GREY .. ". " .. (r.items - (r.thin or 0)) .. " items"
+      .. ((r.thin or 0) > 0 and ("; " .. r.thin .. " with only one or two on sale are left out (asking prices, not a market)") or "")
+      .. ".|r")
+  end
+
+  -- Single movers.
+  for side = 1, 2 do
+    local list = side == 1 and r.rising or r.falling
+    for i, row in ipairs(f.movers[side]) do
+      local d = list[i]
+      row.data = d
+      row:SetShown(d ~= nil)
+      if d then
+        row.icon:SetTexture(ns.ItemIcon(d.id))
+        row.name:SetText(ns.ItemName(d.id))
+        row.name:SetTextColor(ns.ItemColor(d.id))
+        d.word = d.change > 0 and "up" or "down"
+        row.change:SetText(ns.News.Words(d))
+      end
+    end
+    if #list == 0 then
+      f.moverTitles[side]:SetText((side == 1 and "Rising" or "Falling") .. " most over the day" .. GREY .. ": none surely|r")
+    else
+      f.moverTitles[side]:SetText(side == 1 and "Rising most over the day" or "Falling most over the day")
+    end
+  end
+
+  -- The table.
+  local lines = {}
+  if newsTab == "kinds" then
+    f.heads[1]:SetText("Kind of goods")
+    f.heads[2]:SetText("Items")
+    f.heads[3]:SetText("Over the day")
+    f.heads[4]:SetText(NewsSpanHead(r.all.span))
+    f.heads[5]:SetText("")
+    for _, k in ipairs(r.kinds) do
+      lines[#lines + 1] = { kind = k, cells = { k.name, tostring(#k.items), ns.News.Words(k.day), ns.News.Words(k.week), "" } }
+    end
+    if not r.kindsKnown then
+      f.tabNote:SetText("The game did not say the kinds of items yet; try again in a moment.")
+    elseif r.kindsLeft > 0 then
+      f.tabNote:SetText(r.kindsLeft .. (r.kindsLeft == 1 and " smaller kind" or " smaller kinds") .. " left out: fewer than "
+        .. ns.News.MIN_ITEMS .. " items with a change.")
+    else
+      f.tabNote:SetText("")
+    end
+  else
+    f.heads[1]:SetText("Profession, rank")
+    f.heads[2]:SetText("Materials: day")
+    f.heads[3]:SetText("Materials: " .. NewsSpanShort(r.all.span))
+    f.heads[4]:SetText("Goods: day")
+    f.heads[5]:SetText("Goods: " .. NewsSpanShort(r.all.span))
+    for _, p in ipairs(r.professions) do
+      lines[#lines + 1] = { header = true, cells = { GOLD .. p.name .. "|r", "", "", "", "" } }
+      for _, rank in ipairs(p.ranks) do
+        if #rank.mats.items + #rank.goods.items > 0 then
+          lines[#lines + 1] = { rank = rank, profession = p.name, cells = { "   " .. rank.name,
+            ns.News.Words(rank.mats.day), ns.News.Words(rank.mats.week),
+            ns.News.Words(rank.goods.day), ns.News.Words(rank.goods.week) } }
+        end
+      end
+    end
+    f.tabNote:SetText("Hover a row for the items behind it. Ranks by where a recipe turns yellow, less 15.")
+  end
+  f.offset = math.min(f.offset, math.max(0, #lines - NEWS_ROWS))
+  for i, row in ipairs(f.rows) do
+    local line = lines[f.offset + i]
+    row.data = line
+    row:SetShown(line ~= nil)
+    if line then
+      for c = 1, 5 do row.cells[c]:SetText(line.cells[c]) end
+    end
+  end
+  if #lines > NEWS_ROWS then
+    f.more:SetText("Rows " .. (f.offset + 1) .. " to " .. math.min(#lines, f.offset + NEWS_ROWS) .. " of " .. #lines
+      .. ": scroll for more.")
+  else
+    f.more:SetText("")
+  end
+end
+
+ns.Listen("NEWS", function() ns.Safe(UI.UpdateNews) end)
+
+-- The main area shows one of these: "graph", "worth", "sell", "trends", "news" or "data".
 -- The Data page: its sub-pages are picked with the buttons along its top.
 local dataPage, dataButton, graphButton
 local dataTab = "sources"
@@ -2735,6 +3143,7 @@ local function CurrentMode()
   if worth and worth:IsShown() then return "worth" end
   if sell and sell:IsShown() then return "sell" end
   if trends and trends:IsShown() then return "trends" end
+  if news and news:IsShown() then return "news" end
   return "graph"
 end
 
@@ -2743,15 +3152,22 @@ local function SetMode(mode)
   worth:SetShown(mode == "worth")
   sell:SetShown(mode == "sell")
   trends:SetShown(mode == "trends")
+  news:SetShown(mode == "news")
   dataPage:SetShown(mode == "data")
   if mode == "data" then ns.Safe(UI.SelectDataTab, dataTab) end
   view:SetShown(mode == "graph")
   -- The page buttons keep their names; the one in view is lit.
-  for key, button in pairs({ graph = graphButton, worth = worthButton, sell = sellButton, trends = trendsButton, data = dataButton }) do
+  for key, button in pairs({ graph = graphButton, worth = worthButton, sell = sellButton, trends = trendsButton,
+    news = newsButton, data = dataButton }) do
     if key == mode then button:LockHighlight() else button:UnlockHighlight() end
   end
   UI.mode = mode
   if mode == "trends" then ns.Safe(UI.UpdateTrends) end
+  if mode == "news" then
+    news.offset = 0
+    ns.Safe(UI.UpdateNews)
+    if ns.News then ns.News.Refresh() end
+  end
   if mode == "worth" then
     worth.offset = 0
     ns.Safe(UI.UpdateWorth)
@@ -2778,6 +3194,13 @@ function UI.ShowTrends(show, quiet)
   if not trends then return end
   if show == nil then show = not trends:IsShown() end
   SetMode(show and "trends" or "graph")
+  if not quiet then UI.Remember() end
+end
+
+function UI.ShowNews(show, quiet)
+  if not news then return end
+  if show == nil then show = not news:IsShown() end
+  SetMode(show and "news" or "graph")
   if not quiet then UI.Remember() end
 end
 
@@ -3511,7 +3934,7 @@ local function Create()
   frame:HookScript("OnMouseUp", function(_, button) UI.NavButton(button) end)
 
   search = CreateFrame("EditBox", "CraftGraphSearchBox", frame, "SearchBoxTemplate")
-  search:SetSize(180, 20)
+  search:SetSize(124, 20)
   search:SetPoint("LEFT", forward, "RIGHT", 14, 0)
   search:SetAutoFocus(false)
   search:HookScript("OnTextChanged", function(self, userInput)
@@ -3612,8 +4035,14 @@ local function Create()
   end)
   UI.UpdateAutoLabel()
   -- The pages, in a row; the one in view is lit.
+  newsButton = Button(frame, "News", 56)
+  newsButton:SetPoint("LEFT", fullButton, "RIGHT", 14, 0)
+  newsButton:SetScript("OnClick", function() UI.ShowNews() end)
+  Tip(newsButton, "News",
+    "What moved in the market over the day and the week: overall, the biggest single moves, by kind "
+    .. "of goods, and by profession and rank. Also /cg news.")
   graphButton = Button(frame, "Graph", 62)
-  graphButton:SetPoint("LEFT", fullButton, "RIGHT", 14, 0)
+  graphButton:SetPoint("LEFT", newsButton, "RIGHT", 4, 0)
   graphButton:SetScript("OnClick", function() UI.ShowGraph() end)
   Tip(graphButton, "Graph", "What the chosen item is made from and used in, with prices on every step.")
   worthButton = Button(frame, "Opportunities", 108)
@@ -3654,6 +4083,7 @@ local function Create()
   sell = CreateSell(inset)
   trends = CreateTrends(inset)
   dataPage = CreateDataPage(inset)
+  news = CreateNews(inset)
 
   panel = CreatePanel(frame)
   UI.sidePanel, panel.rows = panel, rows
@@ -3679,6 +4109,7 @@ function UI.Refresh(refit)
   UI.UpdateWorth()
   UI.UpdateSell()
   UI.UpdateTrends()
+  UI.UpdateNews()
   local id = state.center
   if not id then
     state.graph = nil
@@ -3995,6 +4426,21 @@ local SOURCES = {
     end,
     tip = "How fast things sell, judged from auctions that vanish between two full scans (not the ones "
       .. "that ran out or were relisted). Off, the cruder guess from price levels is used." },
+  { key = "Base", text = "Base data shipped with the addon",
+    note = function()
+      local b = ns.Base
+      if not b then return "none in this version" end
+      if b.realm ~= ns.realmKey then return "for another auction house: " .. tostring(b.realm) end
+      local span = date("%d %b", b.from) .. " to " .. date("%d %b", b.to)
+      if not ns.Market.Source("Base") then return span .. ", switched off" end
+      return b.scans .. " full scans, " .. span .. " (" .. ns.Age(time() - b.to) .. "); used before your own"
+    end,
+    there = function() return ns.Base and ns.Base.realm == ns.realmKey end,
+    tip = "Prices the addon's author scanned on this auction house, shipped with the addon so that a new "
+      .. "install starts with some history: prices, depth, how listings are stacked, how fast things sold "
+      .. "and vendor prices. For each item it is used only for the time before your own first scan of it, "
+      .. "so your own scans always come first. It holds no seller or character names and none of "
+      .. "Blizzard's web data." },
 }
 
 function UI.SourcesText()

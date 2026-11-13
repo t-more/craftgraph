@@ -141,6 +141,21 @@ side.range:SetText("All")
 ns.settings.chartFlow, ns.settings.chartDemand, ns.settings.chartSmooth = true, true, 360
 ns.UI.Refresh() settle()
 still("supply-demand", { view = boxView(), zoom = 2 })
+-- The mouse on the chart: a line at that moment and its numbers beside it.
+do
+  local chart = ns.UI.sideChart
+  local plot, g = chart.plot, chart.geo
+  local best
+  for _, p in ipairs(g.series) do
+    local x = ((p[1] - g.now) / 86400 - g.t0) / (g.t1 - g.t0)
+    if not best or math.abs(x - 0.62) < math.abs(best - 0.62) then best = x end
+  end
+  wow.point(plot, best or 0.62, 0.5) wow.hover(plot)
+  local v = wow.viewOf(side.week, 8)
+  still("chart-readout", { view = { v[1] - 420, v[2] - 26, v[3] + 420, v[4] + 130 }, zoom = 1.4 })
+  tour("Hover the chart: a line at that moment, and its numbers beside it", 4)
+  calm()
+end
 tour("Supply (blue) floods in and the price sinks; demand (green) surges and it jumps", 5)
 local chartFrame = find(function(f) return f.plot and f.clocks and f.smooth end)
 for _, step in ipairs({ { 0, "Left to itself the chart picks the smoothing" }, { 60, "Smoothed over an hour: every wiggle" },
@@ -379,6 +394,25 @@ do
   ns.settings.chartDays, ns.settings.chartDemand, ns.settings.chartFlow = oldDays, oldDemand, oldFlow
   ns.settings.chartMargin = false
   ns.UI.SetQuantity(oldQty or 1)
+end
+------------------------------------------------------------------------------
+-- The news
+------------------------------------------------------------------------------
+do
+  ns.UI.ShowNews(true) settle()
+  local news = find(function(f) return f.movers and f.tabs and f.tabs.kinds end)
+  still("news", { zoom = 1.5 })
+  tour("News: what moved over the day and the week, by kind of goods and by profession and rank", 4)
+  wow.click(news.tabs.professions)
+  for _, row in ipairs(news.rows) do
+    if row.data and row.data.rank and #row.data.rank.mats.items > 0 then
+      wow.point(row, 0.2, 0.5) wow.hover(row)
+      break
+    end
+  end
+  still("news-professions", { zoom = 1.5 })
+  calm()
+  wow.click(news.tabs.kinds)
 end
 ns.UI.Focus(hero) settle()
 tour("CraftGraph: /cg in game. Everything here was drawn from simulated data", 4)

@@ -1994,6 +1994,58 @@ do
         "past a day it wraps round to auto: " .. chartFrame.smoothText.text)
       chartFrame.smooth.scripts.OnEnter(chartFrame.smooth) chartFrame.smooth.scripts.OnLeave(chartFrame.smooth)
     end
+    -- The readout under the mouse: on a scan, it names the scan, the estimate and every line drawn.
+    do
+      local C = ns.Chart
+      check(ns.settings.chartHover == true and side.hover:GetChecked() == true, "the readout under the mouse is on to start with")
+      ns.settings.chartFlow = true
+      ns.UI.Refresh() RunTimers()
+      local g = chartFrame.geo
+      local scan = g.series[#g.series - 2]
+      local x = ((scan[1] - g.now) / 86400 - g.t0) / (g.t1 - g.t0) * g.W
+      local rows, t = C.ReadoutAt(chartFrame, x + 2)
+      local byLabel = {}
+      for _, row in ipairs(rows or {}) do byLabel[(row[1]:gsub(" at .*$", ""))] = row[2] end
+      check(rows and math.abs(t - scan[1]) < 0.02 * 86400 * (g.t1 - g.t0), "the moment under the mouse is read off the chart")
+      check(byLabel.Scanned and byLabel.Scanned:find("on sale", 1, true)
+        and byLabel["   cheapest tenth"] == ns.Money(scan[2]) and byLabel["   cheapest"] == ns.Money(scan[4]),
+        "a scan two pixels away is named with how many were on sale, its cheapest price and the cheapest tenth (the dot): "
+        .. tostring(byLabel.Scanned) .. ", " .. tostring(byLabel["   cheapest"]) .. ", " .. tostring(byLabel["   cheapest tenth"]))
+      check(byLabel.Estimate and byLabel.Estimate:find(" to ", 1, true), "the estimate comes with its range: " .. tostring(byLabel.Estimate))
+      local demandThere = C.At(g.demand, t) ~= nil
+      check(byLabel["On sale"] == nil and (byLabel["Sold a day"] ~= nil) == demandThere,
+        "the supply line's number is the scan's own (not said twice), demand's where it is drawn")
+      check(chartFrame.cursor:IsShown() and chartFrame.timeBox:IsShown() and chartFrame.timeText.text == date("%a %d %b %H:%M", t)
+        and not chartFrame.flowLabel:IsShown(), "a line marks the moment, its time at the foot in place of the caption")
+      local marks = 0
+      for _, m in ipairs(chartFrame.marks) do if m:IsShown() then marks = marks + 1 end end
+      check(marks == 3 + (demandThere and 1 or 0), "each line crossed gets a mark: " .. marks)
+      local far = C.ReadoutAt(chartFrame, x + 40)
+      local named = false
+      for _, row in ipairs(far or {}) do if row[1]:find("Scanned", 1, true) then named = true end end
+      check(far and not named, "away from any scan, no scan is named")
+      -- Redrawn while the mouse is on it, the readout follows; leaving clears it all.
+      chartFrame.hovering = true
+      ns.UI.Refresh() RunTimers()
+      check(chartFrame.cursor:IsShown() and chartFrame.readoutGeo == chartFrame.geo, "redrawn, the readout follows the new chart")
+      chartFrame.plot.scripts.OnLeave(chartFrame.plot)
+      check(not chartFrame.cursor:IsShown() and not chartFrame.timeBox:IsShown() and chartFrame.flowLabel:IsShown(),
+        "moving off the chart clears the readout and brings the caption back")
+      check(C.ReadoutAt(chartFrame, -3) == nil and not chartFrame.cursor:IsShown(), "outside the chart there is no readout")
+      chartFrame.plot.scripts.OnEnter(chartFrame.plot)
+      chartFrame.plot.scripts.OnUpdate(chartFrame.plot, 0.1)
+      chartFrame.plot.scripts.OnLeave(chartFrame.plot)
+      side.hover:SetChecked(false)
+      side.hover.scripts.OnClick(side.hover)
+      check(ns.settings.chartHover == false and C.ReadoutAt(chartFrame, x) == nil, "switched off, hovering shows nothing")
+      side.hover:SetChecked(true)
+      side.hover.scripts.OnClick(side.hover)
+      local made = C.ReadoutAt(chartFrame, x)
+      C.HideReadout(chartFrame)
+      ns.settings.chartFlow = false
+      ns.UI.Refresh() RunTimers()
+      check(made ~= nil, "and on again, it is back")
+    end
     side.demand:SetChecked(false)
     side.demand.scripts.OnClick(side.demand)
     RunTimers()
@@ -2015,7 +2067,7 @@ do
   M.SetSource("Sales", true)
   check(M.Sales(id) ~= nil and ns.UI.SourcesText() == nil, "switched on again, they are")
   ns.UI.ToggleSources()
-  check(ns.UI.sourcesFrame:IsShown() and #ns.UI.sourcesFrame.rows == 4, "the data sources window opens with its four switches")
+  check(ns.UI.sourcesFrame:IsShown() and #ns.UI.sourcesFrame.rows == 5, "the data sources window opens with its five switches")
   local row = ns.UI.sourcesFrame.rows[3]
   row.check:SetChecked(false)
   row.check.scripts.OnClick(row.check)
@@ -2270,6 +2322,29 @@ do
   check(zeros == 0, "no false \"none listed\" point is written")
   check(M.Get(b).sn == 2, "the number of sellers is kept apart from the sales count: " .. tostring(M.Get(b).sn))
   check(ns.db.lastFullCount == 5, "the length of the last complete list is remembered")
+
+  -- Hours later, a list that stays far shorter than the last complete one
+  -- (in the game: 19,084 auctions between 164,015 and 213,689): only part.
+  ns.db.lastFullCount, ns.db.lastFullScan = 100, now - 3 * 3600
+  local scansBefore = #(ns.realm.scans or {})
+  local soldBefore = M.Get(b).sb
+  local pointsA = #M.History(M.Get(a))
+  list = { { b, 4, 300, "Bo" } }
+  M.lastFingerprint = nil
+  before = #ns.db.log
+  FireEvent("REPLICATE_ITEM_LIST_UPDATE")
+  RunTimers()
+  local partialLogged = false
+  for i = before + 1, #ns.db.log do
+    if ns.db.log[i]:find("partial scan recorded", 1, true) then partialLogged = true end
+  end
+  check(partialLogged, "a list far shorter than the last complete one is recorded as only part")
+  check(#M.History(M.Get(a)) == pointsA and M.Info(a).price ~= nil,
+    "an item missing from it gets no \"none listed\" point")
+  check(M.Info(b).price == 75 and M.Get(b).lp, "an item in it has its price, marked as from part of a list")
+  check(M.Get(b).sb == soldBefore, "it is not used for sales")
+  check(ns.db.lastFullCount == 100 and #(ns.realm.scans or {}) == scansBefore,
+    "it does not count as a full scan, nor become the length to compare with")
   C_AuctionHouse.GetNumReplicateItems, C_AuctionHouse.GetReplicateItemInfo = oldNum, oldInfo
   M.lastFingerprint = nil
 
@@ -2289,6 +2364,26 @@ do
   check(keptEmpty, "a \"none listed\" far from any price is believed and kept")
   check(fixed.v == nil and fixed.sa == nil and fixed.sb == nil and fixed.sn == 2, "turnover built on the pieces starts again; sellers are counted afresh")
   check(M.Repair(db) == 0 and db.dataVersion == 2, "the repair runs once")
+
+  -- Part scans recorded as full ones (up to 0.3.0): found by their auction count, taken out once.
+  local t1, t2, t3, t4 = now - 10 * 3600, now - 7.5 * 3600, now - 5 * 3600, now - 3 * 3600
+  db = { dataVersion = 2, realms = { R = { scans = { t1, 160000, t2, 19084, t3, 213689, t4, 215000 }, items = {
+    [1] = { h = { t1, 100, 100, 50, t2, 300, 300, 3, t3, 101, 101, 48, t4, 102, 102, 47 }, lt = t4,
+            sa = 30, sc = 3, sb = 7 / 24, sh = { t2, 60, t3, 60, t4, 12 } },
+    [2] = { h = { t1, 500, 500, 5, t2, 0, 0, 0, t3, 500, 500, 5 }, lt = t2 },
+  } } } }
+  local part = M.PartScans(db.realms.R.scans)
+  check(part[t2] and not part[t1] and not part[t3] and not part[t4], "the scan of 19,084 among ones of 160,000 and more is a part scan")
+  local points, gone = M.RepairPartScans(db)
+  local one, two = db.realms.R.items[1], db.realms.R.items[2]
+  check(points == 2 and gone == 1 and #M.History(one) / 4 == 3 and #M.History(two) / 4 == 2,
+    "its points go, the others stay (" .. points .. " points, " .. gone .. " scan)")
+  check(#db.realms.R.scans == 6, "and it is no longer listed as a full scan")
+  -- Gaps t1-t2 and t2-t3 touched it; only t3-t4 (2 h, 12 a day) is clean.
+  check(math.abs(one.sb - 2 / 24) < 0.002 and one.sa < 30 and #one.sh == 2, "the sales across it are taken out: "
+    .. string.format("%.3f days, %.1f units left", one.sb, one.sa))
+  check(two.lp == true, "a ladder from it is marked as only part of one")
+  check(M.RepairPartScans(db) == 0 and db.dataVersion == 3, "this repair runs once too")
   ns.realm.items[a], ns.realm.items[b] = nil, nil
 end
 
@@ -2382,6 +2477,9 @@ do
   local info = M.Info(a)
   check(info and info.price == 50 and info.total == 15 and info.shared and info.age == 600, "an imported price is used, marked as shared, with its real age")
   check(#M.Series(a) == 1 and M.Get(a) == nil, "it shows as a price point without entering your own history")
+  local sp = M.Series(a)[1]
+  check(sp[5] == "shared" and sp[4] == 50 and sp[2] == M.RobustPrice(info.ladder, info.total) and sp[3] == 15,
+    "on the chart it is the same measure as any scan (the cheapest tenth), marked as shared, with its cheapest beside it")
   -- Importing the same again changes nothing, and says so.
   local again = M.Import(text)
   check(not again.ok and again.older == count and again.text:find("no newer than what you had", 1, true), "the same data twice: " .. again.text)
@@ -3291,6 +3389,284 @@ do
   n, nights, step = ns.Chart.DrawClock(f, midnight + 13 * 3600 + 600, midnight + 15 * 3600 + 600, 320, 100)
   check(step == 1 and n == 2, "two hours: an icon on each hour (" .. n .. ")")
 end
+
+------------------------------------------------------------------------------
+-- Base data: packed, read back, and used only before the player's own scans.
+do
+  local M = ns.Market
+  local P = dofile("tools/basepack.lua")
+  -- The number letters: every size of number comes back.
+  -- Read back through a one-point item, whose units carry the number.
+  local function UintBack(v)
+    local out = {}
+    P.Uint(out, 0) P.Uint(out, 1) P.Uint(out, 0) P.Int(out, v) P.Int(out, 0) P.Uint(out, 0)
+    return M.BaseUnpack(table.concat(out), 0).h[4]
+  end
+  local allBack = true
+  for _, v in ipairs({ 1, 31, 32, 33, 1023, 1024, 32767, 32768, 2 ^ 31, 123456789 }) do
+    if UintBack(v) ~= v then allBack = false print("  number did not come back: " .. v .. " -> " .. tostring(UintBack(v))) end
+  end
+  check(allBack, "numbers of every size come back from the letters")
+  local priceOk = true
+  for _, p in ipairs({ 1, 2, 37, 499, 531, 9999, 123456, 99999999 }) do
+    local q = P.Q(p)
+    local back = math.floor(math.exp(q * P.STEP) + 0.5)
+    if math.abs(back - p) > 0.001 * p + 0.5 then priceOk = false print("  price " .. p .. " came back as " .. back) end
+    if p < 500 and back ~= p then priceOk = false print("  small price " .. p .. " not exact: " .. back) end
+  end
+  check(priceOk, "prices come back exact below 5 silver and within a tenth of a percent above")
+
+  -- A base with two items and a vendor.
+  local X, Z, Y = 2447, 765, 2678
+  local oldBase, oldItems = ns.Base, ns.realm.items
+  ns.realm.items = {}
+  ns.generation = ns.generation + 1
+  local t0 = math.floor((now - 11 * 86400) / 300) * 300
+  local h = {}
+  for k = 0, 11 do
+    local t = now - 10 * 86400 + k * 3600
+    h[#h + 1], h[#h + 2], h[#h + 3], h[#h + 4] = t, 100 + k * 2, 104 + k * 2, 20 + k
+  end
+  h[#h + 1], h[#h + 2], h[#h + 3], h[#h + 4] = now - 10 * 86400 + 12 * 3600, 0, 0, 0     -- none listed
+  local recX = { h = h, l = { 120, 5, 130, 10 }, lt = now - 10 * 86400 + 11 * 3600, ln = 15,
+    bs = { 20, 3.5, 5, 1 }, sa = 40, sc = 4, sb = 1.5, sf = 0.2 }
+  local hz = {}
+  for k = 0, 5 do
+    hz[#hz + 1], hz[#hz + 2], hz[#hz + 3], hz[#hz + 4] = now - 10 * 86400 + k * 3600, 5000, 5100, 3
+  end
+  local recZ = { h = hz, l = { 5000, 3 }, lt = hz[#hz - 3], ln = 3 }
+  ns.Base = { version = 1, realm = ns.realmKey, t0 = t0, from = h[1], to = h[#h - 3], scans = 12,
+    items = { [X] = P.Item(recX, t0), [Z] = P.Item(recZ, t0) },
+    salesPrior = { share = 0.5, stack = 4, items = 100 }, vendor = { [Y] = 37 },
+    vendorAt = { [Y] = { n = "Test Vendor", z = "Test Town" } } }
+  local back = M.BaseUnpack(ns.Base.items[X], t0)
+  local same = #back.h == #h
+  for i = 1, #h, 4 do
+    same = same and math.abs(back.h[i] - h[i]) <= 150 and back.h[i + 1] == h[i + 1] and back.h[i + 2] == h[i + 2]
+      and back.h[i + 3] == h[i + 3]
+  end
+  check(same, "an item's history comes back: times within 2.5 minutes, small prices and units exact")
+  check(back.l[1] == 120 and back.l[3] == 130 and back.ln == 15 and back.bs[1] == 20 and back.bs[2] == 3.5
+    and back.sa == 40 and back.sc == 4 and back.sb == 1.5 and back.sf == 0.2 and not back.ls,
+    "its ladder, stacks and sales come back")
+  check(#ns.Base.items[X] < 100, "and it is small: " .. #ns.Base.items[X] .. " letters for 13 points, a ladder, stacks and sales")
+
+  -- Never scanned by the player: the base is all there is.
+  check(M.Base(X) ~= nil and #M.Series(X) == 12, "with no scan of their own the base history is used (" .. #M.Series(X) .. " prices)")
+  check(M.Series(X)[1][5] == "base" and M.Series(X)[1][4] == 100 and M.Series(X)[1][2] == 104,
+    "each base point says it is base data, with its cheapest and its cheapest tenth")
+  local info = M.Info(X)
+  check(info and info.base and info.price == 120 and info.total == 15 and math.abs(info.age - 10 * 86400 + 11 * 3600) <= 150,
+    "the price shown is what the base data saw last, with its age, marked as base data")
+  check(ns.UI.ScanAgeText(X):find("base data", 1, true) ~= nil, "and the window says so: " .. ns.UI.ScanAgeText(X))
+  local sales = M.Sales(X)
+  local fade = 0.5 ^ ((now - ns.Base.to) / 86400 / 7)
+  check(sales and sales.base and math.abs(sales.days - 1.5 * fade) < 1e-3 and sales.rate > 0,
+    "its sales count, faded for their age like the player's own (" .. (sales and sales.days or "none") .. " days left)")
+  check(M.Tally(X, "hd") ~= nil and M.Tally(X, "wd") ~= nil, "hour and weekday tallies are made from its points")
+  local vb, how = M.VendorBuy(Y)
+  check(vb == 37 and how == "seen" and M.VendorWhere(Y):find("Test Vendor", 1, true), "vendor prices and where come with it")
+
+  -- The player scans it later: their own comes after, the base stays before.
+  M.Record(X, { { 150, 10 } }, { full = true, t = now - 3600 })
+  check(#M.Series(X) == 13 and M.Series(X)[13][2] == 150, "own scans after the base: both, the base first")
+  check(M.Info(X).base == nil and M.Info(X).price == 150, "the price shown is the player's own")
+  check(M.Sales(X) and M.Sales(X).base, "the base's sales still count, being from before")
+
+  -- The author's own install: own history from before the base began.
+  M.Record(Z, { { 4000, 2 } }, { full = true, t = ns.Base.from - 3600 })
+  check(M.Base(Z) == nil, "own history from before the base began: none of it is used")
+  check(#M.Series(Z) == 1 and M.Sales(Z) == nil, "the series and sales are the player's own alone")
+
+  -- Switched off, or another auction house.
+  M.SetSource("Base", false)
+  check(M.Base(X) == nil and M.VendorBuy(Y) ~= 37 and #M.Series(X) == 1, "switched off, the base data is not used")
+  check(ns.UI.SourcesText():find("Base data", 1, true) ~= nil, "and the window says it is off")
+  M.SetSource("Base", true)
+  ns.Base.realm = "Elsewhere - Horde"
+  check(M.Base(X) == nil and M.BaseMeta() == nil, "base data for another auction house is not used")
+  ns.Base.realm = ns.realmKey
+
+  -- A new install: the market's sales prior comes from the base.
+  ns.realm.items = {}
+  ns.generation = ns.generation + 1
+  local prior = M.SalesPrior()
+  check(prior and prior.base and prior.share == 0.5, "with nothing watched yet, the market's share sold comes from the base")
+  check(M.Sales(X) and M.Sales(X).prior ~= nil, "and starts the belief about an item")
+  ns.Stats.usePrior = nil
+  local okPrior = pcall(ns.Stats.MarketPrior)
+  check(okPrior, "the market priors can be worked out from base items")
+  -- A string the reader cannot read is reported once, not thrown.
+  ns.Base.items[2449] = "!!"
+  check(M.Base(2449) == nil, "an unreadable item is left out")
+  for i = #ns.db.log, 1, -1 do
+    if ns.db.log[i]:find("base data for item", 1, true) then table.remove(ns.db.log, i) end
+  end
+  ns.Base, ns.realm.items = oldBase, oldItems
+  ns.generation = ns.generation + 1
+
+  -- The real base data in the repository: for its own auction house, every item reads.
+  if oldBase and oldBase.items then
+    local n, bad = 0, 0
+    for id, s in pairs(oldBase.items) do
+      n = n + 1
+      local ok = pcall(M.BaseUnpack, s, oldBase.t0)
+      if not ok then bad = bad + 1 end
+    end
+    check(n > 0 and bad == 0, "every item of Data/Base.lua reads (" .. n .. " items)")
+    check(oldBase.realm ~= ns.realmKey and M.BaseMeta() == nil, "and it is not used on the test auction house")
+  end
+end
+
+------------------------------------------------------------------------------
+-- News: the sums, one item's change, the ranks, the whole page.
+do
+  local N = ns.News
+  local function rep(v, n) local t = {} for i = 1, n do t[i] = v end return t end
+  local up = N.Sum(rep(math.log(1.1), 10))
+  check(up.word == "up" and math.abs(up.change - 0.1) < 1e-6 and up.lo < 0.1 and up.hi > 0.1, "ten items all up 10%: up 10%, with a range")
+  check(N.Sum(rep(0, 50)).word == "steady", "fifty items unchanged: steady")
+  local mixed = {}
+  for i = 1, 10 do mixed[i] = (i % 2 == 0 and 1 or -1) * 0.2 end
+  check(N.Sum(mixed).word == "unclear", "half up, half down: unclear")
+  check(N.Sum({ 0.1, 0.1, 0.1 }).word == "few", "three items are too few to judge")
+  check(N.Words(up):find("up 10%", 1, true) and N.Words(N.Sum({})):find("too few", 1, true), "in words: " .. N.Words(up, true))
+
+  local anchor = now
+  local series = {}
+  for k = 9 * 24, 0, -1 do
+    local t = anchor - k * 3600
+    series[#series + 1] = { t, k < 24 and 110 or 100 }
+  end
+  local c = N.ItemChange(series, anchor)
+  check(c and math.abs(c.day - math.log(1.1)) < 1e-9 and math.abs(c.week - math.log(1.1)) < 1e-9 and c.span == 7,
+    "an item up 10% in the last day: +10% over the day and over the week")
+  local short = {}
+  for k = 3 * 24, 0, -1 do short[#short + 1] = { anchor - k * 3600, 100 } end
+  c = N.ItemChange(short, anchor)
+  check(c and c.week and c.span > 2 and c.span < 3, "three days of history: the week compares with the first day (" .. (c and c.span or 0) .. " days)")
+  check(N.ItemChange({ { anchor - 3 * 86400, 100 } }, anchor) == nil, "nothing in the last day: no change for it")
+
+  check(N.RankOf({ 0, 1, 0, 1, 0, "", {}, 40, 70 }) == 1 and N.RankOf({ 0, 1, 0, 1, 0, "", {}, 100, 130 }) == 2
+    and N.RankOf({ 0, 1, 0, 1, 0, "", {}, 170, 200 }) == 3 and N.RankOf({ 0, 1, 0, 1, 0, "", {}, 250, 270 }) == 4
+    and N.RankOf({ 0, 1, 0, 1, 0, "", {}, 330, 350 }) == 5 and N.RankOf({ 0, 1, 0, 1, 0, "", {}, 0, 0 }) == nil,
+    "ranks by where a recipe turns yellow, less 15")
+  local profs = N.Groups().professions
+  local names = {}
+  for _, p in ipairs(profs) do names[#names + 1] = p.name end
+  local joined = table.concat(names, ",")
+  check(joined:find("Alchemy", 1, true) and joined:find("Tailoring", 1, true) and not joined:find("DNT", 1, true)
+    and not joined:find("Demonology", 1, true), "the professions: " .. joined)
+
+  -- A market where herbs rose 10% today and cloth fell 10%.
+  local herbs = { 2447, 765, 2449, 785, 2450, 2453, 2452, 3820 }
+  local cloth = { 2589, 2592, 4306, 4338, 14047 }
+  local oldItems, oldBase, oldOnline, oldInstant = ns.realm.items, ns.Base, ns.Online, C_Item.GetItemInfoInstant
+  ns.realm.items, ns.Base, ns.Online = {}, false, false
+  ns.generation = ns.generation + 1
+  local kind = {}
+  for _, id in ipairs(herbs) do kind[id] = { "Trade Goods", "Herb", 7, 9 } end
+  for _, id in ipairs(cloth) do kind[id] = { "Trade Goods", "Cloth", 7, 5 } end
+  C_Item.GetItemInfoInstant = function(id)
+    local k = kind[id]
+    if k then return id, k[1], k[2], "", 0, k[3], k[4] end
+    return id, "", "", "", 0, 15, 0
+  end
+  for k = 48, 1, -1 do
+    local t = now - k * 3600
+    for i, id in ipairs(herbs) do
+      M = ns.Market
+      ns.Market.Record(id, { { (k <= 24 and 110 or 100) * (1 + i / 100), 20 } }, { full = true, t = t })
+    end
+    for i, id in ipairs(cloth) do
+      ns.Market.Record(id, { { (k <= 24 and 900 or 1000) * (1 + i / 100), 20 } }, { full = true, t = t })
+    end
+  end
+  local got
+  N.Refresh(function(r) got = r end, true)
+  RunTimers()
+  check(got and got.items == #herbs + #cloth, "the news looks at every item with prices (" .. (got and got.items or 0) .. ")")
+  local byName = {}
+  for _, k in ipairs(got and got.kinds or {}) do byName[k.name] = k end
+  check(byName.Herb and byName.Herb.day.word == "up" and math.abs(byName.Herb.day.change - 0.1) < 0.001,
+    "herbs: up 10% over the day")
+  check(byName.Cloth and byName.Cloth.day.word == "down", "cloth: down over the day")
+  check(got.all.week.word == "few" or got.all.span < 2, "two days of history: hardly a week to compare (" .. tostring(got.all.span) .. ")")
+  check(#got.rising >= 1 and #got.falling >= 1, "single movers both ways: " .. #got.rising .. " rising, " .. #got.falling .. " falling")
+  local alchemy
+  for _, p in ipairs(got.professions) do if p.name == "Alchemy" then alchemy = p end end
+  local sawUp = false
+  for _, rank in ipairs(alchemy and alchemy.ranks or {}) do
+    if rank.mats.day.word == "up" then sawUp = true end
+  end
+  check(sawUp, "alchemy's materials (herbs) are up at some rank")
+  local head = N.Headline(got)
+  check(head and head:find("Herb up 10%", 1, true), "the chat headline names it: " .. tostring(head))
+
+  -- The page.
+  ns.Open(2447) RunTimers()
+  ns.UI.ShowNews(true)
+  RunTimers()
+  local page
+  for _, f in ipairs(frames) do if f.movers and f.tabs and f.tabs.kinds then page = f end end
+  check(page and page:IsShown(), "the News page opens")
+  check(page and page.lead.text:find("Prices overall", 1, true) and page.rows[1]:IsShown(), "with the overall line and rows: " .. (page and page.lead.text or ""))
+  if page then
+    for side = 1, 2 do
+      for _, row in ipairs(page.movers[side]) do
+        if row.data then row.scripts.OnEnter(row) end
+      end
+    end
+    for _, row in ipairs(page.rows) do if row.data then row.scripts.OnEnter(row) end end
+    page.tabs.professions.scripts.OnClick(page.tabs.professions)
+    check(page.heads[2].text == "Materials: day", "the profession table has materials and goods columns")
+    for _, row in ipairs(page.rows) do if row.data then row.scripts.OnEnter(row) end end
+    page.scripts.OnMouseWheel(page, -1)
+    page.scripts.OnMouseWheel(page, 1)
+    page.chat:SetChecked(false)
+    page.chat.scripts.OnClick(page.chat)
+    check(ns.settings.newsChat == false, "the chat headline can be switched off")
+    page.chat:SetChecked(true)
+    page.chat.scripts.OnClick(page.chat)
+    if page.movers[1][1].data then page.movers[1][1].scripts.OnClick(page.movers[1][1], "LeftButton") end
+  end
+  SlashCmdList.CRAFTGRAPH("news")
+  RunTimers()
+  check(page and page:IsShown(), "/cg news opens it")
+  -- Once a day in chat.
+  local said = {}
+  local oldPrint = ns.Print
+  ns.Print = function(msg) said[#said + 1] = tostring(msg) end
+  ns.settings.newsDay = nil
+  ns.Fire("LOGIN")
+  RunTimers()
+  local saidNews = false
+  for _, s in ipairs(said) do if s:find("news:", 1, true) then saidNews = true end end
+  check(saidNews, "the headline is said in chat after logging in")
+  said = {}
+  ns.Fire("LOGIN")
+  RunTimers()
+  saidNews = false
+  for _, s in ipairs(said) do if s:find("news:", 1, true) then saidNews = true end end
+  check(not saidNews, "but only once a day")
+  ns.Print = oldPrint
+  -- An empty market says so instead of a blank page.
+  ns.realm.items = {}
+  ns.generation = ns.generation + 1
+  N.Refresh(nil, true)
+  RunTimers()
+  check(N.result.empty and page.when.text:find("No prices yet", 1, true), "no prices: the page says so")
+  ns.realm.items, ns.Base, ns.Online, C_Item.GetItemInfoInstant = oldItems, oldBase, oldOnline, oldInstant
+  ns.generation = ns.generation + 1
+  N.result = nil
+  ns.UI.ShowNews(false)
+end
+
+local errors = 0
+for _, line in ipairs(ns.db.log) do
+  if line:find("ERROR", 1, true) then errors = errors + 1 print("  " .. line:sub(1, 400)) end
+end
+check(errors == 0, "no errors in the addon's own log (" .. errors .. ")")
 
 local names = {}
 for k in pairs(unknownCalls) do names[#names + 1] = k end

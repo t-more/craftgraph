@@ -8,6 +8,7 @@ Read down as far as you care to.
    └─ Your first session
 
 2. Playing with it      what each screen is for
+   ├─ News
    ├─ The graph
    ├─ Opportunities
    ├─ Plans (how many, step by step, what you could lose)
@@ -37,6 +38,7 @@ Read down as far as you care to.
 - [Your first session](start/first-session.md)
 
 ## 2. Playing with it
+- [News](play/news.md): what moved over the day and the week, by kind and by profession and rank
 - [The graph](play/graph.md): what an item is made of and used in
 - [Opportunities](play/opportunities.md): every way to make money now
 - [Plans](play/plans.md): pick something and follow it through

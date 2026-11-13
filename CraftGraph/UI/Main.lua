@@ -64,7 +64,7 @@ local function Button(parent, text, width)
   local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
   b:SetSize(width, 22)
   b:SetText(text)
-  return ns.Skin.Button(b)
+  return b
 end
 
 local function Text(parent, font, justify)
@@ -145,7 +145,6 @@ local rows = {}
 
 local function CreatePanel(parent)
   local p = CreateFrame("Frame", nil, parent, "InsetFrameTemplate")
-  ns.Skin.Panel(p)
   p:SetPoint("TOPRIGHT", -8, -62)
   p:SetPoint("BOTTOMRIGHT", -8, 8)
   p:SetWidth(PANEL_W)
@@ -160,7 +159,6 @@ local function CreatePanel(parent)
   p.iconBorder = p:CreateTexture(nil, "OVERLAY")
   p.iconBorder:SetTexture("Interface\\Common\\WhiteIconFrame")
   p.iconBorder:SetAllPoints(p.icon)
-  ns.Skin.IconFrame(p.iconBorder, p.icon, 40)
   p.teach = UI.CreateTeachMark(p, p.icon, 18)
   p.name = Text(p, "GameFontNormalLarge")
   p.name:SetPoint("TOPLEFT", p.icon, "TOPRIGHT", 10, -2)
@@ -3465,10 +3463,7 @@ end
 -- Window
 ------------------------------------------------------------------------------
 local function Create()
-  -- With the addon's own look the window is a plain frame that the skin
-  -- dresses; without it, the game's standard window.
-  local skinned = ns.Skin.On()
-  frame = CreateFrame("Frame", "CraftGraphFrame", UIParent, (not skinned) and "PortraitFrameTemplate" or nil)
+  frame = CreateFrame("Frame", "CraftGraphFrame", UIParent, "PortraitFrameTemplate")
   frame:SetSize(FRAME_W, FRAME_H)
   frame:SetPoint("CENTER")
   frame:SetFrameStrata("HIGH")
@@ -3480,31 +3475,21 @@ local function Create()
   frame:SetScript("OnDragStart", frame.StartMoving)
   frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
   frame:Hide()
-  if skinned then
-    ns.Skin.Window(frame, "CraftGraph")
-    ns.Skin.Emblem(frame, "Interface\\Icons\\INV_Misc_Coin_02")
-    local close = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
-    close:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -16, -10)
-    close:SetFrameLevel((frame:GetFrameLevel() or 1) + 12)
-    close:SetScript("OnClick", function() frame:Hide() end)
-    frame.CloseButton = close
-  elseif frame.SetTitle then
-    frame:SetTitle("CraftGraph")
-  end
+  if frame.SetTitle then frame:SetTitle("CraftGraph") end
   -- Said plainly on the window itself: this is an experiment.
   local trial = CreateFrame("Button", nil, frame)
-  trial:SetSize(skinned and 160 or 110, 16)
-  trial:SetPoint("TOPRIGHT", frame, "TOPRIGHT", skinned and -46 or -34, skinned and -12 or -3)
+  trial:SetSize(110, 16)
+  trial:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -34, -3)
   trial:SetFrameLevel((frame:GetFrameLevel() or 1) + 10)
   trial.text = trial:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
   trial.text:SetAllPoints()
   trial.text:SetJustifyH("RIGHT")
-  trial.text:SetText(skinned and ("|cff9d8a66v" .. ns.VERSION .. "|r  |cffff2020EXPERIMENTAL|r") or "|cffff2020EXPERIMENTAL|r")
+  trial.text:SetText("|cffff2020EXPERIMENTAL|r")
   Tip(trial, "Experimental (version " .. ns.VERSION .. ")",
     "CraftGraph is a prototype. It has been tried in the game, but not for long. Figures can be wrong and "
     .. "buttons can misbehave: look at what it proposes before you spend gold, and say what breaks.")
   frame.trial = trial
-  if not skinned and frame.SetPortraitToAsset then frame:SetPortraitToAsset("Interface\\Icons\\INV_Misc_Coin_02") end
+  if frame.SetPortraitToAsset then frame:SetPortraitToAsset("Interface\\Icons\\INV_Misc_Coin_02") end
   tinsert(UISpecialFrames, "CraftGraphFrame")
 
   local available = UIParent:GetWidth()
@@ -3660,7 +3645,6 @@ local function Create()
 
   -- Graph area
   local inset = CreateFrame("Frame", nil, frame, "InsetFrameTemplate")
-  ns.Skin.Panel(inset)
   inset:SetPoint("TOPLEFT", 8, -62)
   inset:SetPoint("BOTTOMRIGHT", -(PANEL_W + 12), 28)
   view = ns.GraphView.Create(inset)

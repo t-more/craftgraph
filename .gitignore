@@ -1,9 +1,7 @@
 dist/
 __pycache__/
 *.pyc
-CraftGraph/tools/render/icons/*
-!CraftGraph/tools/render/icons/cg-*.b64
-!CraftGraph/tools/render/icons/sizes.lua
+CraftGraph/tools/render/icons/
 media-build/
 # never commit an API key
 sync.json

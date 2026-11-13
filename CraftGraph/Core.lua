@@ -406,12 +406,6 @@ SlashCmdList["CRAFTGRAPH"] = function(msg)
     if ns.UI and ns.UI.Refresh then ns.UI.Refresh() end
     return
   end
-  if msg == "skin" or msg == "look" then
-    ns.settings.skin = ns.settings.skin == false
-    ns.Print(ns.settings.skin and "the addon's own look (stone, gold frame) is on" or "the game's standard window look is on")
-    ns.Print("type /reload to see the change.")
-    return
-  end
   if msg == "priors" then
     -- What the estimates start from, before an item's own scans weigh in.
     local prior = ns.Stats.MarketPrior()

@@ -73,8 +73,6 @@ the human judge the effort. Friends get it as a zip, so it must work from the zi
 - New file or TOC change needs a game restart; otherwise `/cg reload`.
 - The in-game log (in the saved file) is the evidence of what really happened in game.
 - Pictures are drawn from the real interface code on simulated data (`tools/render/`), and say so.
-- The look (`UI/Skin.lua`) only dresses frames; `/cg skin` turns it off. Its textures in `Media/`
-  are drawn from code (`tools/render/make_textures.py`), never taken from the game's art.
   The one real-data example shows prices only: no seller or character names.
 - Docs: `README.md` sells it in simple words; `docs/` goes deeper level by level.
 

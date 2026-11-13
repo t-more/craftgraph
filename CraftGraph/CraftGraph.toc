@@ -17,7 +17,6 @@ Market.lua
 Stats.lua
 Optimizer.lua
 Graph.lua
-UI\Skin.lua
 UI\Chart.lua
 UI\GraphView.lua
 UI\Main.lua

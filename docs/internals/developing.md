@@ -76,10 +76,6 @@ tools/render/make_media.sh media-build ../docs/media-new
 - `scenes.lua`: what is shown, in which order, with which captions.
 - Needs `rsvg-convert` and `ffmpeg`; the icon fetcher needs Python with Pillow. Icons are
   Blizzard's art and are not committed.
-- `make_textures.py`: draws the window's own textures (stone, gold frame, plaque, buttons, icon
-  frames, the arcane circle) from code into `Media/*.tga`, with PNG copies in `icons/` for the
-  renderer. Run it after changing a texture; needs Pillow, numpy and scipy. The output is
-  committed, so nobody else needs to run it.
 
 It doubles as a visual check: it found a graph that did not fit its view.
 

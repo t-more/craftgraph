@@ -8,6 +8,10 @@
 **Make gold at the auction house in World of Warcraft Forever without doing the sums yourself.**
 Open it in game with `/cg`.
 
+[![Goblins show off the CraftGraph machine: click to play](docs/media/goblin-advert.jpg)](docs/media/goblin-advert.mp4)
+
+*Two goblins show off the machine: a 21-second advert, with sound. Click the picture to play it.*
+
 ![A quick tour](docs/media/tour.gif)
 
 *A one-minute tour ([video](docs/media/tour.mp4)), and, for fun, [the trailer](docs/media/trailer.mp4)
@@ -20,7 +24,11 @@ own interface code, outside the game, on a simulated market unless they say "rea
 kind of goods, and every profession by rank (Apprentice to Master), materials and goods apart.
 Up or down is said only when it is three chances in four; otherwise "steady" or "unclear".
 
-![The market news](docs/media/news.png)
+![The market news from real scans](docs/media/real-news.png)
+
+*Real: the news from its author's own scans on the evening of 12 November. Overnight, patterns
+and blueprints had jumped ten to thirty times over while metal and stone fell. Drawn from the
+addon's own interface code, outside the game.*
 
 It comes with two days of prices from its author's own scans of CAMWOW EU4 Realm 2 PvP
 (Alliance), so on that auction house the news and the estimates have something to go on from your

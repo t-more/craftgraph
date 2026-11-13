@@ -25,3 +25,5 @@ when the version is bumped; see [README.md](README.md).
 - The price chart now says what it shows: each dot is the cheapest tenth on sale, averaged (at
   most the 50 cheapest), and the readout gives the cheapest beside it and where the dot came from.
   Prices shared by another player are drawn the same way now (they were the single cheapest).
+- The readme opens with a 21-second goblin advert (with sound), and shows the News page from real
+  scans.

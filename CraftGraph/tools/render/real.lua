@@ -93,6 +93,7 @@ ns.UI.ShowNews(true) settle()
 local news
 for _, f in ipairs(wow.frames) do if f.movers and f.tabs and f.tabs.kinds then news = f end end
 still("real-news", { zoom = 1.5 })
+if news then still("real-news-page", { view = wow.viewOf(news, 4), zoom = 1.5 }) end
 if news and news.rows[1].data then
   wow.point(news.rows[1], 0.2, 0.5) wow.hover(news.rows[1])
   still("real-news-kind", { zoom = 1.5 })
